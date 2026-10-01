@@ -1,2 +1,34 @@
+# Env & secrets
+.env
+.env.*
+!.env.example
 .bob/
 mcp.json
+*.key
+.langflow/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+dist/
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
+
+# Langflow export — rawan credential, jangan commit
+maker_agent.json
+langflow/maker_agent.json
+
+# PDF besar — bloat repo
+*.pdf
