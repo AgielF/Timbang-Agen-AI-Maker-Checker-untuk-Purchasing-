@@ -18,9 +18,7 @@ class AuditFindingRepository:
         self._session = session
 
     async def get(self, id: uuid.UUID) -> AuditFinding | None:
-        result = await self._session.execute(
-            select(AuditFinding).where(AuditFinding.id == id)
-        )
+        result = await self._session.execute(select(AuditFinding).where(AuditFinding.id == id))
         return result.scalar_one_or_none()
 
     async def create(self, data: AuditFindingCreate) -> AuditFinding:
@@ -34,6 +32,12 @@ class AuditFindingRepository:
         result = await self._session.execute(select(AuditFinding).limit(limit))
         return list(result.scalars().all())
 
+    async def list_by_transaction(self, transaction_id: str) -> list[AuditFinding]:
+        result = await self._session.execute(
+            select(AuditFinding).where(AuditFinding.transaction_id == transaction_id)
+        )
+        return list(result.scalars().all())
+
 
 class CheckResultRepository:
     """Data access layer for CheckResult entities."""
@@ -42,9 +46,7 @@ class CheckResultRepository:
         self._session = session
 
     async def get(self, id: uuid.UUID) -> CheckResult | None:
-        result = await self._session.execute(
-            select(CheckResult).where(CheckResult.id == id)
-        )
+        result = await self._session.execute(select(CheckResult).where(CheckResult.id == id))
         return result.scalar_one_or_none()
 
     async def create(self, data: CheckResultCreate) -> CheckResult:
@@ -54,6 +56,8 @@ class CheckResultRepository:
         await self._session.refresh(check)
         return check
 
-    async def list(self, limit: int = 50) -> list[CheckResult]:
-        result = await self._session.execute(select(CheckResult).limit(limit))
+    async def list_by_finding(self, finding_id: uuid.UUID) -> list[CheckResult]:
+        result = await self._session.execute(
+            select(CheckResult).where(CheckResult.finding_id == finding_id)
+        )
         return list(result.scalars().all())

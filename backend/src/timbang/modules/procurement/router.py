@@ -3,16 +3,32 @@
 Rules (docs/agents/BACKEND_AGENTS.md):
 - Router delegates to service, never calls repository directly.
 - Request/response validated by Pydantic schemas.
+- Domain exceptions mapped to HTTP status codes here.
 """
 
 from __future__ import annotations
+
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from timbang.modules.procurement.repository import PriceQuoteRepository, VendorRepository
-from timbang.modules.procurement.schemas import RecommendationResponse, VendorRead
+from timbang.modules.procurement.schemas import (
+    PriceQuoteCreate,
+    PriceQuoteRead,
+    PriceValidationResult,
+    RecommendationResponse,
+    VendorCreate,
+    VendorRead,
+)
 from timbang.modules.procurement.service import ProcurementService
+from timbang.shared.core.exceptions import (
+    DomainError,
+    NotFoundError,
+    UpstreamError,
+    ValidationError,
+)
 from timbang.shared.db.session import get_session
 
 router = APIRouter(tags=["procurement"])
@@ -25,6 +41,16 @@ def _build_service(session: AsyncSession = Depends(get_session)) -> ProcurementS
     )
 
 
+def _map_exception(exc: DomainError) -> HTTPException:
+    if isinstance(exc, NotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, ValidationError):
+        return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, UpstreamError):
+        return HTTPException(status_code=502, detail=str(exc))
+    return HTTPException(status_code=400, detail=str(exc))
+
+
 @router.get("/vendors", response_model=list[VendorRead])
 async def list_vendors(
     limit: int = 50,
@@ -34,13 +60,50 @@ async def list_vendors(
     return await service.list_vendors(limit=limit)
 
 
-@router.get("/recommendation", response_model=RecommendationResponse)
+@router.post("/vendors", response_model=VendorRead, status_code=201)
+async def register_vendor(
+    data: VendorCreate,
+    service: ProcurementService = Depends(_build_service),
+) -> VendorRead:
+    """Register a new vendor."""
+    try:
+        return await service.register_vendor(data)
+    except DomainError as exc:
+        raise _map_exception(exc) from exc
+
+
+@router.post("/vendors/{vendor_id}/quotes", response_model=PriceQuoteRead, status_code=201)
+async def submit_quote(
+    vendor_id: uuid.UUID,
+    data: PriceQuoteCreate,
+    service: ProcurementService = Depends(_build_service),
+) -> PriceQuoteRead:
+    """Submit a price quote for a vendor."""
+    try:
+        return await service.submit_quote(vendor_id=vendor_id, data=data)
+    except DomainError as exc:
+        raise _map_exception(exc) from exc
+
+
+@router.get("/items/{item_name}/validate", response_model=PriceValidationResult)
+async def cross_validate_price(
+    item_name: str,
+    service: ProcurementService = Depends(_build_service),
+) -> PriceValidationResult:
+    """Cross-validate prices for an item across all vendor quotes."""
+    try:
+        return await service.cross_validate_price(item_name=item_name)
+    except DomainError as exc:
+        raise _map_exception(exc) from exc
+
+
+@router.get("/items/{item_name}/recommend", response_model=RecommendationResponse)
 async def get_recommendation(
     item_name: str,
     service: ProcurementService = Depends(_build_service),
 ) -> RecommendationResponse:
-    """Get Maker Agent recommendation for an item (stub)."""
+    """Get Maker Agent vendor recommendation for an item."""
     try:
         return await service.get_recommendation(item_name=item_name)
-    except NotImplementedError as exc:
-        raise HTTPException(status_code=501, detail=str(exc)) from exc
+    except DomainError as exc:
+        raise _map_exception(exc) from exc

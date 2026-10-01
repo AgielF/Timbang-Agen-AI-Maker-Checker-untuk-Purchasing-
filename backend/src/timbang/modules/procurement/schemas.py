@@ -10,13 +10,16 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
-
+from pydantic import BaseModel, ConfigDict, HttpUrl
 
 # ── Vendor ──────────────────────────────────────────────────────────────────
 
+
 class VendorCreate(BaseModel):
     name: str
+    contact_email: str | None = None
+    phone: str | None = None
+    address: str | None = None
 
 
 class VendorRead(BaseModel):
@@ -24,17 +27,26 @@ class VendorRead(BaseModel):
 
     id: uuid.UUID
     name: str
+    contact_email: str | None
+    phone: str | None
+    address: str | None
+    is_active: bool
     created_at: datetime
 
 
 # ── PriceQuote ───────────────────────────────────────────────────────────────
 
+
 class PriceQuoteCreate(BaseModel):
     vendor_id: uuid.UUID
     item_name: str
+    quantity: Decimal = Decimal("1")
+    unit: str | None = None
     price: Decimal
     currency: str = "IDR"
     source_url: str | None = None
+    valid_until: datetime | None = None
+    notes: str | None = None
 
 
 class PriceQuoteRead(BaseModel):
@@ -43,18 +55,35 @@ class PriceQuoteRead(BaseModel):
     id: uuid.UUID
     vendor_id: uuid.UUID
     item_name: str
+    quantity: Decimal
+    unit: str | None
     price: Decimal
     currency: str
     source_url: str | None
+    valid_until: datetime | None
+    notes: str | None
     created_at: datetime
+
+
+# ── Cross-validation ─────────────────────────────────────────────────────────
+
+
+class PriceValidationResult(BaseModel):
+    median: Decimal
+    min: Decimal
+    max: Decimal
+    flagged_vendor_ids: list[uuid.UUID]
+    spread_percent: Decimal
 
 
 # ── Recommendation ───────────────────────────────────────────────────────────
 
+
 class RecommendationResponse(BaseModel):
     """Output of the Maker Agent recommendation flow."""
 
-    # TODO (next session): populate from LLM / Langflow output
-    recommended_vendor_id: uuid.UUID | None = None
-    estimated_savings: Decimal | None = None
-    rationale: str = ""
+    vendor_id: uuid.UUID | None = None
+    vendor_name: str = ""
+    reason: str = ""
+    estimated_saving: Decimal = Decimal("0")
+    citations: list[HttpUrl] = []

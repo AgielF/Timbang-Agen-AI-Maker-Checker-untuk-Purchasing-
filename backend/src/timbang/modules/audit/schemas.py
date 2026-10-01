@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict
 
-
 # ── AuditFinding ─────────────────────────────────────────────────────────────
+
 
 class AuditFindingCreate(BaseModel):
     transaction_id: str
-    severity: str = "medium"
+    po_number: str = ""
+    severity: str = "MEDIUM"
+    amount: Decimal = Decimal("0")
+    currency: str = "IDR"
     description: str
+    sop_reference: str | None = None
 
 
 class AuditFindingRead(BaseModel):
@@ -21,16 +26,23 @@ class AuditFindingRead(BaseModel):
 
     id: uuid.UUID
     transaction_id: str
+    po_number: str
     severity: str
+    amount: Decimal
+    currency: str
     description: str
+    sop_reference: str | None
     created_at: datetime
 
 
 # ── CheckResult ───────────────────────────────────────────────────────────────
 
+
 class CheckResultCreate(BaseModel):
     finding_id: uuid.UUID
-    status: str = "pending"
+    status: str = "PASS"
+    notes: str | None = None
+    evidence_url: str | None = None
 
 
 class CheckResultRead(BaseModel):
@@ -39,16 +51,44 @@ class CheckResultRead(BaseModel):
     id: uuid.UUID
     finding_id: uuid.UUID
     status: str
+    notes: str | None
+    evidence_url: str | None
     checked_at: datetime
+
+
+# ── Three-way matching ────────────────────────────────────────────────────────
+
+
+class DocumentData(BaseModel):
+    """Generic representation of PO / Goods Receipt / Invoice data."""
+
+    quantity: Decimal
+    amount: Decimal
+    currency: str = "IDR"
+    reference: str = ""
+
+
+class MatchResult(BaseModel):
+    matched: bool
+    discrepancies: list[str]
+
+
+# ── SOP validation ────────────────────────────────────────────────────────────
+
+
+class SopValidationResult(BaseModel):
+    passed: bool
+    violations: list[str]
 
 
 # ── Risk Report ───────────────────────────────────────────────────────────────
 
+
 class RiskReportResponse(BaseModel):
     """Output of the Checker Agent risk report flow."""
 
-    # TODO (next session): populate from three-way matching & SOP validation
-    total_findings: int = 0
-    high_risk_count: int = 0
-    compliance_status: str = "unknown"
-    summary: str = ""
+    transaction_id: str
+    severity: str
+    findings: list[AuditFindingRead]
+    overall_status: str  # PASS | WARN | FAIL
+    recommendation: str

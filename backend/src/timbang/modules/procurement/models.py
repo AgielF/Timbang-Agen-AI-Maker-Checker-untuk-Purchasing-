@@ -1,18 +1,11 @@
-"""SQLAlchemy 2.0 models for the procurement module.
-
-TODO (next session):
-- Add category, lead_time, is_active fields to Vendor
-- Add quantity, unit fields to PriceQuote
-- Add composite indexes for common query patterns
-- Add __repr__ methods
-"""
+"""SQLAlchemy 2.0 models for the procurement module."""
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -24,15 +17,16 @@ class Vendor(Base):
 
     __tablename__ = "vendors"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    contact_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    # TODO: add contact_email, phone, address, is_active
     quotes: Mapped[list[PriceQuote]] = relationship(back_populates="vendor")
 
 
@@ -41,19 +35,20 @@ class PriceQuote(Base):
 
     __tablename__ = "price_quotes"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     vendor_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("vendors.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    item_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    price: Mapped[float] = mapped_column(Numeric(18, 4), nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), default="IDR", nullable=False)
+    item_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    quantity: Mapped[float] = mapped_column(Numeric(14, 4), nullable=False, default=1)
+    unit: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    price: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="IDR")
     source_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    # TODO: add quantity, unit, valid_until, notes
     vendor: Mapped[Vendor] = relationship(back_populates="quotes")
