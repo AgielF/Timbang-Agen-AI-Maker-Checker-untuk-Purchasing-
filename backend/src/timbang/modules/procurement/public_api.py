@@ -6,6 +6,10 @@ Re-exports from service and schemas — no implementation here.
 
 from __future__ import annotations
 
+from timbang.modules.procurement.repository import (
+    PriceQuoteRepository,
+    VendorRepository,
+)
 from timbang.modules.procurement.schemas import (
     PriceQuoteRead,
     PriceValidationResult,
@@ -22,6 +26,8 @@ from timbang.shared.core.exceptions import (
 
 __all__ = [
     "ProcurementService",
+    "VendorRepository",
+    "PriceQuoteRepository",
     "VendorRead",
     "PriceQuoteRead",
     "RecommendationResponse",

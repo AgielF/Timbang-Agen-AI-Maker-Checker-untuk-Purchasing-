@@ -32,3 +32,9 @@ langflow/maker_agent.json
 
 # PDF besar — bloat repo
 *.pdf
+
+# Local SQLite / seed databases — jangan commit
+*.db
+*.sqlite
+*.sqlite3
+demo_seed.db
