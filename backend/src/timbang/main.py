@@ -16,10 +16,21 @@ from timbang.shared.core.logging import setup_logging
 from timbang.shared.core.middleware import limiter, register_middleware
 
 
-def _rate_limit_handler(_request: Request, exc: Exception) -> JSONResponse:
+def _rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Return a structured 429 JSON response with Retry-After header when available."""
+    retry_after: str | None = None
+    if isinstance(exc, RateLimitExceeded):
+        # slowapi stores the retry-after value on the exception
+        retry_after = getattr(exc, "retry_after", None)
+
+    headers = {}
+    if retry_after is not None:
+        headers["Retry-After"] = str(retry_after)
+
     return JSONResponse(
         status_code=429,
-        content={"detail": str(exc)},
+        content={"error": "rate_limit_exceeded", "detail": str(exc)},
+        headers=headers,
     )
 
 
@@ -37,6 +48,7 @@ def create_app() -> FastAPI:
 
     register_middleware(app)
 
+    # SlowAPIMiddleware reads the limiter from app.state.limiter
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)  # type: ignore[arg-type]
 
@@ -45,6 +57,7 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["ops"])
     async def health() -> dict[str, str]:
+        # /health is intentionally NOT rate-limited (uptime checks must always pass)
         return {"status": "ok", "app": settings.app_name}
 
     return app

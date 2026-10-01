@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from timbang.modules.procurement.repository import PriceQuoteRepository, VendorRepository
@@ -29,6 +29,7 @@ from timbang.shared.core.exceptions import (
     UpstreamError,
     ValidationError,
 )
+from timbang.shared.core.middleware import limiter
 from timbang.shared.db.session import get_session
 
 router = APIRouter(tags=["procurement"])
@@ -52,7 +53,9 @@ def _map_exception(exc: DomainError) -> HTTPException:
 
 
 @router.get("/vendors", response_model=list[VendorRead])
+@limiter.limit("120/minute")
 async def list_vendors(
+    request: Request,
     limit: int = 50,
     service: ProcurementService = Depends(_build_service),
 ) -> list[VendorRead]:
@@ -61,7 +64,9 @@ async def list_vendors(
 
 
 @router.post("/vendors", response_model=VendorRead, status_code=201)
+@limiter.limit("30/minute")
 async def register_vendor(
+    request: Request,
     data: VendorCreate,
     service: ProcurementService = Depends(_build_service),
 ) -> VendorRead:
@@ -73,7 +78,9 @@ async def register_vendor(
 
 
 @router.post("/vendors/{vendor_id}/quotes", response_model=PriceQuoteRead, status_code=201)
+@limiter.limit("60/minute")
 async def submit_quote(
+    request: Request,
     vendor_id: uuid.UUID,
     data: PriceQuoteCreate,
     service: ProcurementService = Depends(_build_service),
@@ -86,7 +93,9 @@ async def submit_quote(
 
 
 @router.get("/items/{item_name}/validate", response_model=PriceValidationResult)
+@limiter.limit("60/minute")
 async def cross_validate_price(
+    request: Request,
     item_name: str,
     service: ProcurementService = Depends(_build_service),
 ) -> PriceValidationResult:
@@ -98,7 +107,9 @@ async def cross_validate_price(
 
 
 @router.get("/items/{item_name}/recommend", response_model=RecommendationResponse)
+@limiter.limit("10/minute")
 async def get_recommendation(
+    request: Request,
     item_name: str,
     service: ProcurementService = Depends(_build_service),
 ) -> RecommendationResponse:

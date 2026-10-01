@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # Rate limit
     rate_limit_default: str = "60/minute"
+    rate_limit_enabled: bool = True
+    rate_limit_storage_uri: str = "memory://"  # switch to redis:// in prod
 
     @field_validator("cors_origins", mode="before")
     @classmethod

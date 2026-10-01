@@ -11,13 +11,34 @@ from __future__ import annotations
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter
+from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from timbang.shared.core.config import get_settings
 
-# Rate limiter instance — registered in main.py via app.state.limiter
-limiter = Limiter(key_func=get_remote_address, default_limits=[get_settings().rate_limit_default])
+_settings = get_settings()
+
+# Rate limiter — storage_uri from config ("memory://" for dev, "redis://..." for prod).
+# When rate_limit_enabled=False we use a very high limit rather than a no-op decorator,
+# so the same @limiter.limit decorators on endpoints stay valid and don't need to change.
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[_settings.rate_limit_default],
+    storage_uri=_settings.rate_limit_storage_uri,
+    enabled=_settings.rate_limit_enabled,
+)
+
+
+def get_rate_limit_key(request: Request) -> str:
+    """Composite rate-limit key: remote address + authenticated user ID (if available).
+
+    The user_id comes from request.state (populated by auth middleware when ready).
+    Falls back to remote address for anonymous requests.
+    """
+    remote_addr = get_remote_address(request)
+    user_id: str | None = getattr(request.state, "user_id", None)
+    return f"{remote_addr}:{user_id or 'anon'}"
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -46,3 +67,6 @@ def register_middleware(app: FastAPI) -> None:
 
     # Security headers
     app.add_middleware(SecurityHeadersMiddleware)
+
+    # slowapi rate-limit middleware — must come after SecurityHeadersMiddleware
+    app.add_middleware(SlowAPIMiddleware)
