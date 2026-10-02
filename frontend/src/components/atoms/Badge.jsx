@@ -5,6 +5,7 @@ const VARIANT_MAP = {
   success:  'bg-emerald/10 text-emerald border-emerald/30',
   warning:  'bg-amber/10 text-amber border-amber/30',
   critical: 'bg-sev-critical/10 text-sev-critical border-sev-critical/30',
+  high:     'bg-sev-high/10 text-sev-high border-sev-high/30',
   muted:    'bg-ink/5 text-[var(--color-text-mute)] border-ink/10',
 };
 

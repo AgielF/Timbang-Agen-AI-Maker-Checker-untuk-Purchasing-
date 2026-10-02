@@ -3,7 +3,7 @@ import Badge from '../atoms/Badge';
 
 const LEVEL_MAP = {
   critical: { variant: 'critical', label: 'Critical' },
-  high:     { variant: 'critical', label: 'High' },
+  high:     { variant: 'high',     label: 'High' },
   medium:   { variant: 'warning',  label: 'Medium' },
   low:      { variant: 'success',  label: 'Low' },
 };
