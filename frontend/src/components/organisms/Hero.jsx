@@ -8,20 +8,30 @@ const HEADLINE_ID = 'Deteksi fraud pengadaan sebelum jadi kerugian.';
 const HEADLINE_CLASS =
   'text-5xl md:text-7xl lg:text-8xl font-black tracking-tighter leading-[0.95]';
 
-const REVEAL_RADIUS = 220;
+const REVEAL_RADIUS = 480;
 
-const hiddenGradient = 'radial-gradient(circle 0px at 50% 50%, transparent 0%, transparent 100%)';
-const makeRevealGradient = (x, y) =>
-  `radial-gradient(circle ${REVEAL_RADIUS}px at ${x}px ${y}px, #508DFF 0%, #508DFF 40%, rgba(80,141,255,0) 70%)`;
+// EN: navy di luar circle, transparent di dalam circle (EN hilang di area reveal)
+const EN_OUTSIDE = (x, y) =>
+  `radial-gradient(circle ${REVEAL_RADIUS}px at ${x}px ${y}px, transparent 0%, transparent 97%, #0F2A47 99%)`;
+
+// ID: transparent di luar circle, electric blue di dalam circle (ID muncul di area reveal)
+const ID_INSIDE = (x, y) =>
+  `radial-gradient(circle ${REVEAL_RADIUS}px at ${x}px ${y}px, #508DFF 0%, #508DFF 97%, transparent 99%)`;
+
+const HIDDEN_POS = -9999;
+const EN_INIT = EN_OUTSIDE(HIDDEN_POS, HIDDEN_POS);
+const ID_INIT = ID_INSIDE(HIDDEN_POS, HIDDEN_POS);
 
 export default function Hero() {
   const heroRef = useRef(null);
+  const baseRef = useRef(null);
   const overlayRef = useRef(null);
 
   useEffect(() => {
     const hero = heroRef.current;
+    const base = baseRef.current;
     const overlay = overlayRef.current;
-    if (!hero || !overlay) return;
+    if (!hero || !base || !overlay) return;
 
     const isTouch = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
     if (isTouch) {
@@ -29,24 +39,27 @@ export default function Hero() {
       return;
     }
 
-    overlay.style.backgroundImage = hiddenGradient;
-
     const onMove = (e) => {
-      const rect = overlay.getBoundingClientRect();
+      const rect = hero.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      overlay.style.backgroundImage = makeRevealGradient(x, y);
+      base.style.backgroundImage = EN_OUTSIDE(x, y);
+      overlay.style.backgroundImage = ID_INSIDE(x, y);
     };
 
     const onLeave = () => {
-      overlay.style.backgroundImage = hiddenGradient;
+      base.style.backgroundImage = EN_INIT;
+      overlay.style.backgroundImage = ID_INIT;
     };
 
     hero.addEventListener('mousemove', onMove);
     hero.addEventListener('mouseleave', onLeave);
+    document.addEventListener('mouseleave', onLeave);
+
     return () => {
       hero.removeEventListener('mousemove', onMove);
       hero.removeEventListener('mouseleave', onLeave);
+      document.removeEventListener('mouseleave', onLeave);
     };
   }, []);
 
@@ -67,9 +80,21 @@ export default function Hero() {
       </div>
       <div className="relative z-10 mx-auto max-w-7xl px-6 py-32 md:py-40">
         <div className="relative">
-          <h1 className={`${HEADLINE_CLASS} text-navy`}>
+          {/* Base EN — navy muncul di luar circle, hilang di dalam circle */}
+          <h1
+            ref={baseRef}
+            style={{
+              color: 'transparent',
+              backgroundClip: 'text',
+              WebkitBackgroundClip: 'text',
+              backgroundImage: EN_INIT,
+            }}
+            className={HEADLINE_CLASS}
+          >
             {HEADLINE_EN}
           </h1>
+
+          {/* Overlay ID — electric blue muncul di dalam circle saja */}
           <h1
             ref={overlayRef}
             aria-hidden="true"
@@ -77,7 +102,7 @@ export default function Hero() {
               color: 'transparent',
               backgroundClip: 'text',
               WebkitBackgroundClip: 'text',
-              backgroundImage: hiddenGradient,
+              backgroundImage: ID_INIT,
             }}
             className={`${HEADLINE_CLASS} absolute inset-0 pointer-events-none`}
           >
