@@ -5,40 +5,45 @@
 @tailwind components;
 @tailwind utilities;
 
-@property --mx { syntax: '<percentage>'; inherits: true; initial-value: 50%; }
-@property --my { syntax: '<percentage>'; inherits: true; initial-value: 50%; }
-
 :root {
-  /* Brand */
+  /* ── RGB channels for Tailwind alpha-modifier support ─────────────────── */
+  --color-navy-rgb:       15 42 71;
+  --color-electric-rgb:   80 141 255;
+  --color-emerald-rgb:    16 185 129;
+  --color-amber-rgb:      245 158 11;
+  --color-ink-rgb:        10 10 11;
+  --color-canvas-rgb:     250 250 248;
+  --color-surface-rgb:    30 41 59;
+  --color-surface-2-rgb:  15 23 42;
+  --sev-critical-rgb:     239 68 68;
+  --sev-high-rgb:         249 115 22;
+  --sev-medium-rgb:       234 179 8;
+  --sev-low-rgb:          34 197 94;
+
+  /* ── Hex values (kept for direct CSS usage, inline styles, etc.) ───────── */
   --color-navy:       #0F2A47;
   --color-electric:   #508DFF;
-
-  /* Semantic state */
   --color-emerald:    #10B981;
   --color-amber:      #F59E0B;
   --color-red:        #EF4444;
-
-  /* Surface */
   --color-canvas:     #FAFAF8;
   --color-ink:        #0A0A0B;
   --color-surface:    #1E293B;
   --color-surface-2:  #0F172A;
+  --sev-critical:     #EF4444;
+  --sev-high:         #F97316;
+  --sev-medium:       #EAB308;
+  --sev-low:          #22C55E;
 
-  /* Text */
+  /* ── Text ─────────────────────────────────────────────────────────────── */
   --color-text:           #0A0A0B;
   --color-text-mute:      #64748B;
   --color-text-inv:       #FAFAF8;
   --color-text-inv-mute:  #94A3B8;
 
-  /* Border */
+  /* ── Border ───────────────────────────────────────────────────────────── */
   --border-light: rgba(15, 42, 71, 0.10);
   --border-dark:  rgba(250, 250, 248, 0.10);
-
-  /* Severity */
-  --sev-critical: #EF4444;
-  --sev-high:     #F97316;
-  --sev-medium:   #EAB308;
-  --sev-low:      #22C55E;
 }
 
 body {

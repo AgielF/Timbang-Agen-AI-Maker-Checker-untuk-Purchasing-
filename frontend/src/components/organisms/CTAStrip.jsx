@@ -1,11 +1,12 @@
 import { memo } from 'react';
+import { Link } from 'react-router-dom';
 import Button from '../atoms/Button';
 
 function CTAStrip({
   headline = 'Mulai deteksi fraud hari ini.',
   caption = 'Gratis selama hackathon. Tanpa kartu kredit.',
   ctaLabel = 'Coba Sekarang',
-  ctaTo = '/dashboard',
+  ctaTo = '/',
 }) {
   return (
     <section
@@ -19,11 +20,7 @@ function CTAStrip({
         <p className="text-base text-[var(--color-text-mute)] max-w-md">
           {caption}
         </p>
-        <Button
-          variant="primary"
-          size="lg"
-          onClick={() => { window.location.href = ctaTo; }}
-        >
+        <Button as={Link} to={ctaTo} variant="primary" size="lg">
           {ctaLabel}
         </Button>
       </div>
