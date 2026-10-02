@@ -1,29 +1,14 @@
+import { useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import WorkbenchTemplate from '../components/templates/WorkbenchTemplate';
 import NavBar from '../components/organisms/NavBar';
 import FindingList from '../components/organisms/FindingList';
 import Button from '../components/atoms/Button';
 import Badge from '../components/atoms/Badge';
+import Icon from '../components/atoms/Icon';
+import { useRiskReport } from '../hooks/useApi';
+import { SAMPLE_TRANSACTION_ID, SAMPLE_DOCS } from '../lib/constants';
 
-const REPORT_TS = '2026-09-30T10:00:00Z';
-
-const SAMPLE_FINDINGS = [
-  { id: 1, transaction_id: 'TRX-001', severity: 'high',   message: 'Invoice melebihi PO sebesar 5%.',              created_at: '2026-09-30T10:00:00Z' },
-  { id: 2, transaction_id: 'TRX-001', severity: 'high',   message: 'Tidak ada approval untuk selisih harga.',       created_at: '2026-09-30T10:01:00Z' },
-  { id: 3, transaction_id: 'TRX-001', severity: 'medium', message: 'Tanggal GR lebih awal dari tanggal PO.',        created_at: '2026-09-30T10:02:00Z' },
-  { id: 4, transaction_id: 'TRX-001', severity: 'low',    message: 'Referensi vendor tidak cocok dengan database.', created_at: '2026-09-30T10:03:00Z' },
-  { id: 5, transaction_id: 'TRX-001', severity: 'low',    message: 'Nomor PO tidak ditemukan di sistem internal.',  created_at: '2026-09-30T10:04:00Z' },
-];
-
-const SAMPLE_BREAKDOWN = { critical: 0, high: 2, medium: 1, low: 3 };
-const RISK_SCORE       = 72;
-const SOP_RESULT       = {
-  passed:     false,
-  violations: [
-    'Invoice melebihi PO sebesar 5%',
-    'Tidak ada approval untuk selisih harga',
-  ],
-};
 const RECOMMENDED_ACTIONS = [
   'Investigasi approval untuk selisih harga',
   'Konfirmasi ke vendor mengenai kuantitas',
@@ -33,12 +18,39 @@ const RECOMMENDED_ACTIONS = [
 const SEV_COLORS = { critical: 'bg-sev-critical', high: 'bg-sev-high', medium: 'bg-sev-medium', low: 'bg-sev-low' };
 const SEV_TEXT   = { critical: 'text-sev-critical', high: 'text-sev-high', medium: 'text-sev-medium', low: 'text-sev-low' };
 
+// Backend returns severity as uppercase — map to lowercase for SeverityBadge + RiskGauge
+const SEV_SCORE_MAP = { CRITICAL: 90, HIGH: 72, MEDIUM: 45, LOW: 20, WARN: 55 };
+
 const fmtTs = (iso) => {
   try { return new Date(iso).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'short' }); }
   catch { return iso; }
 };
 
-function RiskGauge({ score }) {
+// Map API finding shape → FindingList shape
+// API: { id, transaction_id, po_number, severity, amount, currency, description, sop_reference, created_at }
+// FindingList expects: { id, transaction_id, severity, message, created_at }
+function mapFinding(f) {
+  return {
+    id:             f.id,
+    transaction_id: f.po_number ?? f.transaction_id,
+    severity:       (f.severity ?? '').toLowerCase(),
+    message:        f.description ?? f.sop_reference ?? '—',
+    created_at:     f.created_at,
+  };
+}
+
+// Derive breakdown counts from findings array
+function deriveBreakdown(findings) {
+  const counts = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const f of findings ?? []) {
+    const key = (f.severity ?? '').toLowerCase();
+    if (key in counts) counts[key]++;
+  }
+  return counts;
+}
+
+function RiskGauge({ severity }) {
+  const score = SEV_SCORE_MAP[(severity ?? '').toUpperCase()] ?? 50;
   const pct   = Math.min(100, Math.max(0, score));
   const color = pct >= 70 ? 'bg-sev-high' : pct >= 40 ? 'bg-sev-medium' : 'bg-sev-low';
   return (
@@ -73,26 +85,33 @@ function SeverityBreakdown({ counts }) {
   );
 }
 
-function SopPanel({ result }) {
-  const cls = result.passed ? 'border-emerald/30 bg-emerald/5 text-emerald' : 'border-sev-high/30 bg-sev-high/5 text-sev-high';
-  return (
-    <div className={`border p-6 flex flex-col gap-3 ${cls.split(' ').slice(0, 2).join(' ')}`}>
-      <span className={`text-xs font-semibold uppercase tracking-wider ${result.passed ? 'text-emerald' : 'text-sev-high'}`}>
-        SOP Validation — {result.passed ? 'PASSED' : 'FAILED'}
-      </span>
-      {!result.passed && result.violations.map((v) => (
-        <div key={v} className="flex items-start gap-2 text-sm text-[var(--color-text-inv)]">
-          <span className="text-sev-high mt-0.5 shrink-0">✕</span>
-          {v}
-        </div>
-      ))}
-    </div>
-  );
+function StatusBadge({ status }) {
+  const map = {
+    PASS: { variant: 'success', label: 'PASS' },
+    WARN: { variant: 'warning', label: 'WARN' },
+    FAIL: { variant: 'critical', label: 'FAIL' },
+  };
+  const { variant, label } = map[(status ?? '').toUpperCase()] ?? { variant: 'muted', label: status ?? '—' };
+  return <Badge variant={variant}>{label}</Badge>;
 }
 
 export default function RiskReportPage() {
   const [searchParams] = useSearchParams();
-  const txId = searchParams.get('tx') ?? 'TRX-001';
+  const txId = searchParams.get('tx') ?? SAMPLE_TRANSACTION_ID;
+  const { data, error, loading, run } = useRiskReport();
+
+  const doRun = useCallback(() => {
+    run(txId, SAMPLE_DOCS).catch(() => {});
+  }, [run, txId]);
+
+  // Auto-run on mount + when txId changes
+  useEffect(() => {
+    doRun();
+  }, [doRun]);
+
+  const findings   = (data?.findings ?? []).map(mapFinding);
+  const breakdown  = deriveBreakdown(data?.findings);
+  const reportTime = data?.findings?.[0]?.created_at ?? '';
 
   return (
     <WorkbenchTemplate
@@ -105,11 +124,11 @@ export default function RiskReportPage() {
             </h2>
             <p className="text-sm text-[var(--color-text-inv-mute)]">
               Transaction: <span className="font-mono">{txId}</span>
-              <span className="mx-2">·</span>
-              {fmtTs(REPORT_TS)}
+              {data && <><span className="mx-2">·</span>{fmtTs(reportTime)}</>}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0 mt-1">
+            {data && <StatusBadge status={data.overall_status} />}
             <Button variant="ghost" size="sm" disabled>Export PDF</Button>
             <Badge variant="warning">Coming Soon</Badge>
           </div>
@@ -117,46 +136,60 @@ export default function RiskReportPage() {
       }
       inputZone={null}
       resultZone={
-        <div className="flex flex-col gap-6">
-          {/* Row 1: Gauge + Breakdown */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <RiskGauge score={RISK_SCORE} />
-            <SeverityBreakdown counts={SAMPLE_BREAKDOWN} />
+        loading ? (
+          <div className="flex items-center justify-center gap-3 py-16 text-[var(--color-text-inv-mute)]">
+            <span className="inline-block w-5 h-5 rounded-full border-2 border-electric border-r-transparent animate-spin" />
+            <span className="text-sm">Membuat laporan risiko…</span>
           </div>
-
-          {/* Row 2: Summary */}
-          <div className="border border-amber/30 bg-amber/10 px-5 py-4">
-            <p className="text-sm font-semibold text-amber">
-              Risiko tinggi: invoice melebihi PO sebesar 5%.
-            </p>
+        ) : error ? (
+          <div className="flex items-start gap-3 border border-sev-critical/30 bg-sev-critical/5 px-4 py-4">
+            <span className="text-sev-critical shrink-0 mt-0.5"><Icon name="x-circle" size={16} /></span>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-sev-critical">{error.message}</p>
+              <Button variant="ghost" size="sm" className="self-start" onClick={doRun}>
+                Retry
+              </Button>
+            </div>
           </div>
+        ) : data ? (
+          <div className="flex flex-col gap-6">
+            {/* Row 1: Gauge + Breakdown */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <RiskGauge severity={data.severity} />
+              <SeverityBreakdown counts={breakdown} />
+            </div>
 
-          {/* Row 3: SOP */}
-          <SopPanel result={SOP_RESULT} />
+            {/* Row 2: Summary */}
+            {data.recommendation && (
+              <div className="border border-amber/30 bg-amber/10 px-5 py-4">
+                <p className="text-sm font-semibold text-amber">{data.recommendation}</p>
+              </div>
+            )}
 
-          {/* Row 4: Findings */}
-          <section className="flex flex-col gap-3">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-inv-mute)]">
-              Temuan
-            </h3>
-            <FindingList items={SAMPLE_FINDINGS} />
-          </section>
+            {/* Row 3: Findings */}
+            <section className="flex flex-col gap-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-inv-mute)]">
+                Temuan
+              </h3>
+              <FindingList items={findings} />
+            </section>
 
-          {/* Row 5: Recommended Actions */}
-          <section className="flex flex-col gap-3 border border-[var(--border-dark)] bg-surface p-6">
-            <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-inv-mute)]">
-              Recommended Actions
-            </h3>
-            <ul className="flex flex-col gap-2">
-              {RECOMMENDED_ACTIONS.map((action) => (
-                <li key={action} className="flex items-start gap-2 text-sm text-[var(--color-text-inv)]">
-                  <span className="text-electric mt-0.5 shrink-0">→</span>
-                  {action}
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
+            {/* Row 4: Recommended Actions */}
+            <section className="flex flex-col gap-3 border border-[var(--border-dark)] bg-surface p-6">
+              <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-inv-mute)]">
+                Recommended Actions
+              </h3>
+              <ul className="flex flex-col gap-2">
+                {RECOMMENDED_ACTIONS.map((action) => (
+                  <li key={action} className="flex items-start gap-2 text-sm text-[var(--color-text-inv)]">
+                    <span className="text-electric mt-0.5 shrink-0">→</span>
+                    {action}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </div>
+        ) : null
       }
     />
   );

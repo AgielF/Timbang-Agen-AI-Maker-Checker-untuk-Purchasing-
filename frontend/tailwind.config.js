@@ -4,19 +4,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        navy:        'var(--color-navy)',
-        electric:    'var(--color-electric)',
-        emerald:     'var(--color-emerald)',
-        amber:       'var(--color-amber)',
-        ink:         'var(--color-ink)',
-        canvas:      'var(--color-canvas)',
-        surface:     'var(--color-surface)',
-        'surface-2': 'var(--color-surface-2)',
+        navy:        'rgb(var(--color-navy-rgb) / <alpha-value>)',
+        electric:    'rgb(var(--color-electric-rgb) / <alpha-value>)',
+        emerald:     'rgb(var(--color-emerald-rgb) / <alpha-value>)',
+        amber:       'rgb(var(--color-amber-rgb) / <alpha-value>)',
+        ink:         'rgb(var(--color-ink-rgb) / <alpha-value>)',
+        canvas:      'rgb(var(--color-canvas-rgb) / <alpha-value>)',
+        surface:     'rgb(var(--color-surface-rgb) / <alpha-value>)',
+        'surface-2': 'rgb(var(--color-surface-2-rgb) / <alpha-value>)',
         sev: {
-          critical: 'var(--sev-critical)',
-          high:     'var(--sev-high)',
-          medium:   'var(--sev-medium)',
-          low:      'var(--sev-low)',
+          critical: 'rgb(var(--sev-critical-rgb) / <alpha-value>)',
+          high:     'rgb(var(--sev-high-rgb) / <alpha-value>)',
+          medium:   'rgb(var(--sev-medium-rgb) / <alpha-value>)',
+          low:      'rgb(var(--sev-low-rgb) / <alpha-value>)',
         },
       },
       fontFamily: {
