@@ -15,6 +15,7 @@ const SIZE_MAP = {
 
 const Button = forwardRef(function Button(
   {
+    as: Comp = 'button',
     variant = 'primary',
     size = 'md',
     loading = false,
@@ -27,10 +28,10 @@ const Button = forwardRef(function Button(
   ref,
 ) {
   return (
-    <button
+    <Comp
       ref={ref}
-      type={type}
-      disabled={disabled || loading}
+      type={Comp === 'button' ? type : undefined}
+      disabled={Comp === 'button' ? (disabled || loading) : undefined}
       className={[
         'inline-flex items-center justify-center rounded-md font-medium',
         'transition-colors focus-visible:outline-none focus-visible:ring-2',
@@ -42,7 +43,7 @@ const Button = forwardRef(function Button(
       {...rest}
     >
       {loading ? <Spinner size="sm" /> : children}
-    </button>
+    </Comp>
   );
 });
 

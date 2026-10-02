@@ -43,7 +43,7 @@ function NavBar({ activePath = '' }) {
         </nav>
 
         {/* CTA */}
-        <Button variant="primary" size="sm" as={Link} onClick={() => { window.location.href = '/dashboard'; }}>
+        <Button as={Link} to="/dashboard" variant="primary" size="sm">
           Launch App
         </Button>
       </div>
