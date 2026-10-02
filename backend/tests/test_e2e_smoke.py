@@ -107,13 +107,19 @@ async def test_submit_quote_and_validate_price(client):
     assert Decimal(body["spread_percent"]) > Decimal("30")
 
 
-# ── 4. Recommendation endpoint (mock 9Router) ─────────────────────────────────
+# ── 4. Recommendation endpoint (mock Langflow) ────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_recommendation_endpoint_returns_shape(client):
-    """Mock 9Router HTTP call and verify RecommendationResponse shape."""
-    # Seed 3 vendors + quotes first (same item for cross_validate to pass)
+async def test_recommendation_endpoint_returns_shape(client, monkeypatch):
+    """Mock Langflow HTTP call and verify RecommendationResponse shape."""
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_maker_flow_id",
+        "test-flow-id",
+    )
+
+    # Seed 3 vendors + quotes
     prices = [
         ("VendorRec1", Decimal("5000000")),
         ("VendorRec2", Decimal("5200000")),
@@ -132,19 +138,15 @@ async def test_recommendation_endpoint_returns_shape(client):
         )
         assert r.status_code == 201
 
-    mock_payload = {
-        "choices": [
-            {
-                "message": {
-                    "content": (
-                        f'{{"vendor_id": "{vendor_ids[0]}", "vendor_name": "VendorRec1",'
-                        f' "reason": "Lowest price", "estimated_saving": "200000",'
-                        f' "citations": []}}'
-                    )
-                }
-            }
-        ]
-    }
+    # Real Langflow-shaped response with new schema
+    langflow_text = (
+        '{"vendor_name": "PT Sinar", "items": ['
+        '{"nama_item": "Monitor 27", "harga_vendor": 5000000, '
+        '"harga_pasar_rata": 5100000, "selisih_persen": -1.96, '
+        '"status": "WAJAR", "rekomendasi": "SETUJU", '
+        '"sumber": ["https://a"], "alasan": "Harga kompetitif"}]}'
+    )
+    mock_payload = {"outputs": [{"outputs": [{"results": {"message": {"text": langflow_text}}}]}]}
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = httpx.Response(
@@ -156,11 +158,12 @@ async def test_recommendation_endpoint_returns_shape(client):
 
     assert r.status_code == 200
     body = r.json()
-    assert "vendor_id" in body
-    assert "reason" in body
-    assert "estimated_saving" in body
-    assert "citations" in body
-    assert isinstance(body["citations"], list)
+    assert "vendor_name" in body
+    assert body["vendor_name"] == "PT Sinar"
+    assert "items" in body
+    assert len(body["items"]) == 1
+    assert body["items"][0]["nama_item"] == "Monitor 27"
+    assert body["items"][0]["rekomendasi"] == "SETUJU"
 
 
 # ── 5. Three-way matching endpoint ────────────────────────────────────────────

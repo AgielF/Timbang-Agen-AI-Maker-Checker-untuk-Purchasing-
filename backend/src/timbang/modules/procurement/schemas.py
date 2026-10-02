@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict
 
 # ── Vendor ──────────────────────────────────────────────────────────────────
 
@@ -79,11 +79,36 @@ class PriceValidationResult(BaseModel):
 # ── Recommendation ───────────────────────────────────────────────────────────
 
 
-class RecommendationResponse(BaseModel):
-    """Output of the Maker Agent recommendation flow."""
+class RecommendedItem(BaseModel):
+    """Per-item analysis from the Langflow Maker Agent."""
 
+    nama_item: str
+    harga_vendor: Decimal
+    harga_pasar_rata: Decimal | None = None
+    selisih_persen: float | None = None
+    status: str
+    rekomendasi: str
+    sumber: list[str] = []
+    alasan: str
+
+
+class RecommendationResponse(BaseModel):
+    """Output of the Maker Agent recommendation flow (Langflow).
+
+    New fields (from real Langflow output):
+      vendor_name, items, raw_text
+
+    Legacy fields (kept for backward compat with existing tests):
+      vendor_id, reason, estimated_saving, citations
+    """
+
+    # ── New Langflow fields ──
+    vendor_name: str | None = None
+    items: list[RecommendedItem] = []
+    raw_text: str | None = None  # populated when LLM output cannot be parsed
+
+    # ── Legacy / fallback fields ──
     vendor_id: uuid.UUID | None = None
-    vendor_name: str = ""
     reason: str = ""
     estimated_saving: Decimal = Decimal("0")
-    citations: list[HttpUrl] = []
+    citations: list[str] = []

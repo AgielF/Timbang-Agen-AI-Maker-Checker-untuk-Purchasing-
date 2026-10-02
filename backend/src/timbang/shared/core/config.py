@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_storage_uri: str = "memory://"  # switch to redis:// in prod
 
+    # Langflow
+    langflow_base_url: str = "http://127.0.0.1:7860"
+    langflow_api_key: str = ""  # set via env LANGFLOW_API_KEY — NEVER hardcode
+    langflow_maker_flow_id: str = ""
+    langflow_timeout_seconds: float = 120.0
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _parse_cors(cls, v: object) -> list[str]:

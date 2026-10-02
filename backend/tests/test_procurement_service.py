@@ -85,25 +85,24 @@ async def test_cross_validate_price_no_outlier(session):
     assert result.spread_percent < Decimal("5")
 
 
-# ── get_recommendation (mock 9Router) ─────────────────────────────────────────
+# ── get_recommendation (mock Langflow) ────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_get_recommendation_mock_9router(session, seed_vendors_and_quotes):
-    """get_recommendation calls 9Router and parses the JSON response."""
-    vendors = seed_vendors_and_quotes
-    expected_vendor_id = str(vendors[0].id)
-
+async def test_get_recommendation_mock_9router(session, seed_vendors_and_quotes, monkeypatch):
+    """get_recommendation calls Langflow and parses the JSON response."""
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_maker_flow_id",
+        "test-flow-id",
+    )
+    langflow_text = (
+        '{"vendor_name": "Vendor 1", '
+        '"items": [{"nama_item": "laptop", "harga_vendor": 9000000, '
+        '"status": "WAJAR", "rekomendasi": "SETUJU", "alasan": "ok", "sumber": []}]}'
+    )
     mock_response_body = {
-        "choices": [
-            {
-                "message": {
-                    "content": f'{{"vendor_id": "{expected_vendor_id}", "vendor_name": "Vendor 1", '
-                    f'"reason": "Cheapest price", "estimated_saving": "500000", '
-                    f'"citations": []}}'
-                }
-            }
-        ]
+        "outputs": [{"outputs": [{"results": {"message": {"text": langflow_text}}}]}]
     }
 
     svc = _make_service(session)
@@ -117,19 +116,25 @@ async def test_get_recommendation_mock_9router(session, seed_vendors_and_quotes)
         result = await svc.get_recommendation("laptop")
 
     assert result.vendor_name == "Vendor 1"
-    assert result.estimated_saving == Decimal("500000")
+    assert len(result.items) == 1
+    assert result.items[0].nama_item == "laptop"
 
 
 @pytest.mark.asyncio
-async def test_get_recommendation_upstream_error(session, seed_vendors_and_quotes):
-    """get_recommendation raises UpstreamError when 9Router returns non-200."""
+async def test_get_recommendation_upstream_error(session, seed_vendors_and_quotes, monkeypatch):
+    """get_recommendation raises UpstreamError when Langflow returns non-200."""
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_maker_flow_id",
+        "test-flow-id",
+    )
     svc = _make_service(session)
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_post.return_value = httpx.Response(
             status_code=503,
-            json={"error": "Service Unavailable"},
+            text="Service Unavailable",
             request=httpx.Request("POST", "http://mock"),
         )
-        with pytest.raises(UpstreamError, match="9Router returned HTTP 503"):
+        with pytest.raises(UpstreamError, match="HTTP 503"):
             await svc.get_recommendation("laptop")

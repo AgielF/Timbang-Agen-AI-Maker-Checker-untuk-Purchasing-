@@ -148,9 +148,15 @@ async def test_rate_limit_headers_present(rl_client):
 
 
 @pytest.mark.asyncio
-async def test_recommend_endpoint_rate_limited(rl_client):
+async def test_recommend_endpoint_rate_limited(rl_client, monkeypatch):
     """11th call to /recommend (limit: 10/minute) must return 429."""
-    # Seed 3 vendors + quotes so the service has data (mock 9Router for recommend)
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_maker_flow_id",
+        "test-rl-flow-id",
+    )
+
+    # Seed 3 vendors + quotes so the service has data
     prices = [
         ("RLVendor1", Decimal("5000000")),
         ("RLVendor2", Decimal("5100000")),
@@ -169,16 +175,24 @@ async def test_recommend_endpoint_rate_limited(rl_client):
         )
         assert r.status_code == 201
 
+    # Langflow-shaped mock payload
     mock_payload = {
-        "choices": [
+        "outputs": [
             {
-                "message": {
-                    "content": (
-                        f'{{"vendor_id": "{vendor_ids[0]}", "vendor_name": "RLVendor1",'
-                        f' "reason": "Best price", "estimated_saving": "100000",'
-                        f' "citations": []}}'
-                    )
-                }
+                "outputs": [
+                    {
+                        "results": {
+                            "message": {
+                                "text": (
+                                    '{"vendor_name": "RLVendor1", "items": ['
+                                    '{"nama_item": "RL Laptop", "harga_vendor": 5000000, '
+                                    '"status": "WAJAR", "rekomendasi": "SETUJU", '
+                                    '"alasan": "ok", "sumber": []}]}'
+                                )
+                            }
+                        }
+                    }
+                ]
             }
         ]
     }

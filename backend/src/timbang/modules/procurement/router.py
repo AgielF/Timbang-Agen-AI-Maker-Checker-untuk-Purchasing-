@@ -113,8 +113,10 @@ async def get_recommendation(
     item_name: str,
     service: ProcurementService = Depends(_build_service),
 ) -> RecommendationResponse:
-    """Get Maker Agent vendor recommendation for an item."""
+    """Get Maker Agent vendor recommendation for an item (Langflow integration)."""
     try:
-        return await service.get_recommendation(item_name=item_name)
+        # Load quotes first so the service can include them in the Langflow prompt
+        quotes = await service._load_quotes_for_item(item_name)
+        return await service.get_recommendation(item_name=item_name, quotes=quotes or None)
     except DomainError as exc:
         raise _map_exception(exc) from exc
