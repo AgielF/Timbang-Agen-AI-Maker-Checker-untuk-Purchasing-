@@ -1,40 +1,67 @@
-# Env & secrets
+# ─────────────────────────────────────────────────────────────────────────────
+# TIMBANG — .gitignore
+# Sectioned per docs/SECURITY.md "File yang WAJIB di-.gitignore"
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Secrets & credentials (docs/SECURITY.md §Aturan Wajib) ──────────────────
 .env
 .env.*
 !.env.example
-.bob/
 mcp.json
 *.key
-.langflow/
+*.pem
+*.p12
 
-# Python
+# ── IBM Bob / editor agent state ─────────────────────────────────────────────
+.bob/
+
+# ── Langflow state & exports (rawan credential) ──────────────────────────────
+.langflow/
+langflow/maker_agent.json
+
+# ── Python artefacts ─────────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
 *.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# ── Virtual environment ───────────────────────────────────────────────────────
 .venv/
 venv/
+env/
+ENV/
+
+# ── Tool caches ───────────────────────────────────────────────────────────────
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
-# Node
-node_modules/
-dist/
-
-# OS/editor
-.DS_Store
-.vscode/
-.idea/
-
-# Langflow export — rawan credential, jangan commit
-maker_agent.json
-langflow/maker_agent.json
-
-# PDF besar — bloat repo
-*.pdf
-
-# Local SQLite / seed databases — jangan commit
+# ── Local databases & seed files (never commit local state) ──────────────────
 *.db
 *.sqlite
 *.sqlite3
-demo_seed.db
+
+# ── Frontend build artefacts (reserved for future React frontend) ────────────
+node_modules/
+dist/
+.next/
+.nuxt/
+
+# ── OS & editor noise ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*~
+
+# ── Large binary / docs (bloat repo) ─────────────────────────────────────────
+*.pdf
