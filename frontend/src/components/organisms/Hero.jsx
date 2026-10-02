@@ -114,7 +114,7 @@ export default function Hero() {
           menengah Indonesia. Tanpa ERP, tanpa setup rumit.
         </p>
         <div className="mt-10 flex flex-wrap gap-3">
-          <Button as={Link} to="/maker" variant="primary" size="lg">
+          <Button as={Link} to="/checker" variant="primary" size="lg">
             Lihat Demo
           </Button>
           <Button as={Link} to="/about" variant="ghost" size="lg">

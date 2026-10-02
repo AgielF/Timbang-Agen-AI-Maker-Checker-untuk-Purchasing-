@@ -3,9 +3,10 @@ import NavLink from '../molecules/NavLink';
 import Button from '../atoms/Button';
 
 const NAV_LINKS = [
-  { to: '/product', label: 'Product' },
-  { to: '/research', label: 'Research' },
-  { to: '/docs', label: 'Docs' },
+  { to: '/#features',      label: 'Product',  dimmed: false },
+  { to: '/#how-it-works',  label: 'Research', dimmed: false },
+  { to: '/checker',        label: 'Checker',  dimmed: false },
+  { to: '/about',          label: 'Docs',     dimmed: true  },
 ];
 
 function NavBar({ activePath = '' }) {
@@ -31,20 +32,30 @@ function NavBar({ activePath = '' }) {
 
         {/* Nav links */}
         <nav className="hidden md:flex items-center gap-1" aria-label="Main navigation">
-          {NAV_LINKS.map(({ to, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              active={activePath === to}
-            >
-              {label}
-            </NavLink>
+          {NAV_LINKS.map(({ to, label, dimmed }) => (
+            dimmed ? (
+              <span
+                key={to}
+                className="text-sm font-medium px-3 py-2 text-[var(--color-text-mute)] opacity-60 cursor-default"
+                title="Coming soon"
+              >
+                {label}
+              </span>
+            ) : (
+              <NavLink
+                key={to}
+                to={to}
+                active={activePath === to}
+              >
+                {label}
+              </NavLink>
+            )
           ))}
         </nav>
 
         {/* CTA */}
-        <Button as={Link} to="/dashboard" variant="primary" size="sm">
-          Launch App
+        <Button as={Link} to="/checker" variant="primary" size="sm">
+          Open Checker
         </Button>
       </div>
     </header>

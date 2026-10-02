@@ -5,18 +5,11 @@ import Spinner from './components/atoms/Spinner';
 // Landing is NOT lazy — must render instantly as the entry point
 import LandingPage from './pages/LandingPage';
 
-const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
-
-// ─── Placeholders for Iterasi 3B ────────────────────────────────────────────
-function Placeholder({ title }) {
-  return (
-    <div className="min-h-screen bg-ink text-[var(--color-text-inv)] flex items-center justify-center">
-      <p className="font-mono text-sm text-[var(--color-text-inv-mute)]">
-        {title} — coming in Iteration 3B
-      </p>
-    </div>
-  );
-}
+// ─── Lazy-loaded active pages ────────────────────────────────────────────────
+const NotFoundPage   = lazy(() => import('./pages/NotFoundPage'));
+const CheckerPage    = lazy(() => import('./pages/CheckerPage'));
+const RiskReportPage = lazy(() => import('./pages/RiskReportPage'));
+const ComingSoonPage = lazy(() => import('./pages/ComingSoonPage'));
 
 // ─── Suspense fallback ───────────────────────────────────────────────────────
 function LoadingScreen() {
@@ -33,16 +26,56 @@ export default function App() {
     <BrowserRouter>
       <Suspense fallback={<LoadingScreen />}>
         <Routes>
+          {/* Active routes */}
           <Route path="/"                    element={<LandingPage />} />
-          <Route path="/dashboard"           element={<Placeholder title="Dashboard" />} />
-          <Route path="/maker"               element={<Placeholder title="Maker" />} />
-          <Route path="/maker/validate"      element={<Placeholder title="Maker / Validate" />} />
-          <Route path="/checker"             element={<Placeholder title="Checker" />} />
-          <Route path="/checker/risk-report" element={<Placeholder title="Checker / Risk Report" />} />
-          <Route path="/vendors"             element={<Placeholder title="Vendors" />} />
-          <Route path="/findings"            element={<Placeholder title="Findings" />} />
-          <Route path="/about"               element={<Placeholder title="About" />} />
-          <Route path="*"                    element={<NotFoundPage />} />
+          <Route path="/checker"             element={<CheckerPage />} />
+          <Route path="/checker/risk-report" element={<RiskReportPage />} />
+
+          {/* Coming Soon routes */}
+          <Route path="/dashboard" element={
+            <ComingSoonPage
+              title="Dashboard"
+              description="Ringkasan KPI, aktivitas vendor, dan temuan audit terbaru. Sedang dikerjakan untuk versi berikutnya."
+              eta="Est. 1–2 minggu"
+            />
+          } />
+          <Route path="/maker" element={
+            <ComingSoonPage
+              title="Maker Agent"
+              description="Backend Maker Agent sudah selesai dan live-tested dengan Langflow (HTTP 200, ~62.9s). UI sedang diselesaikan untuk demo berikutnya."
+              eta="Backend ready · UI in progress"
+            />
+          } />
+          <Route path="/maker/validate" element={
+            <ComingSoonPage
+              title="Price Validation"
+              description="Cross-validate harga item dari quote vendor. Bagian dari modul Maker Agent."
+              eta="Est. 1 minggu"
+            />
+          } />
+          <Route path="/vendors" element={
+            <ComingSoonPage
+              title="Vendor Management"
+              description="Kelola master data vendor dan quote."
+              eta="Est. 2 minggu"
+            />
+          } />
+          <Route path="/findings" element={
+            <ComingSoonPage
+              title="Audit Findings"
+              description="Lihat semua temuan audit dan riwayat pemeriksaan."
+              eta="Est. 1 minggu"
+            />
+          } />
+          <Route path="/about" element={
+            <ComingSoonPage
+              title="About Timbang"
+              description="Dokumentasi arsitektur, tech stack, dan roadmap."
+              eta="Est. 3 hari"
+            />
+          } />
+
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>
     </BrowserRouter>
