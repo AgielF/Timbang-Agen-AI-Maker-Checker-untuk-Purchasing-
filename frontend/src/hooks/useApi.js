@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
+import { API_BASE_URL } from '../lib/constants'
 
 export function useApi(fn) {
   const [data, setData] = useState(null)
@@ -43,3 +44,69 @@ export function useApi(fn) {
 
 export const useMatchThreeWay = () => useApi(api.matchThreeWay)
 export const useRiskReport = () => useApi(api.riskReport)
+
+export function useMakerRecommendation() {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const abortRef = useRef(null)
+
+  const submit = useCallback(async (itemName, file) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    const timeoutId = setTimeout(() => controller.abort(), 120_000)
+
+    setLoading(true)
+    setError(null)
+    setData(null)
+
+    try {
+      const form = new FormData()
+      form.append('item_name', itemName)
+      form.append('file', file)
+
+      let res
+      try {
+        res = await fetch(`${API_BASE_URL}/api/v1/procurement/items/recommend-with-file`, {
+          method: 'POST',
+          body: form,
+          signal: controller.signal,
+        })
+      } catch (e) {
+        if (e.name === 'AbortError') {
+          setError('Request timeout, coba lagi')
+          return
+        }
+        throw e
+      }
+
+      const text = await res.text()
+      let payload = null
+      if (text) {
+        try { payload = JSON.parse(text) } catch { payload = text }
+      }
+
+      if (!res.ok) {
+        const detail =
+          (typeof payload === 'object' && (payload?.detail ?? payload?.message)) ||
+          res.statusText ||
+          `HTTP ${res.status}`
+        setError(String(detail))
+        return
+      }
+
+      setData(payload)
+    } catch (e) {
+      setError(e?.message ?? 'Terjadi kesalahan.')
+    } finally {
+      clearTimeout(timeoutId)
+      if (abortRef.current === controller) setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  return { data, loading, error, submit }
+}

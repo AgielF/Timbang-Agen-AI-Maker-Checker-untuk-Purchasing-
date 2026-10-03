@@ -1,65 +1,62 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import WorkbenchTemplate from '../components/templates/WorkbenchTemplate';
 import NavBar from '../components/organisms/NavBar';
 import PageHeader from '../components/organisms/PageHeader';
-import SearchBar from '../components/molecules/SearchBar';
 import RecommendationPanel from '../components/organisms/RecommendationPanel';
-
-const SAMPLE_RECOMMENDATION = {
-  vendor_name: 'PT Maju Jaya',
-  items: [
-    {
-      item_name: 'Laptop',
-      recommended_vendor: 'PT Maju Jaya',
-      quoted_price: 12500000,
-      market_price: 13600000,
-      saving_estimate: 1100000,
-    },
-  ],
-  reason:
-    'Vendor menawarkan harga 8% di bawah median pasar dengan track record pengiriman tepat waktu.',
-  confidence: 0.87,
-};
+import FileUploader from '../components/molecules/FileUploader';
+import Button from '../components/atoms/Button';
+import { useMakerRecommendation } from '../hooks/useApi';
 
 export default function MakerPage() {
   const [itemName, setItemName] = useState('');
-  const [panelState, setPanelState] = useState('idle');
-  const [result, setResult] = useState(null);
-  const timerRef = useRef(null);
+  const [file, setFile] = useState(null);
+  const [fileError, setFileError] = useState('');
   const navigate = useNavigate();
 
-  // Simulate loading → success after 3 seconds
-  useEffect(() => {
-    if (panelState !== 'loading') return;
-    timerRef.current = setTimeout(() => {
-      setResult(SAMPLE_RECOMMENDATION);
-      setPanelState('success');
-    }, 3000);
-    return () => clearTimeout(timerRef.current);
-  }, [panelState]);
+  const { data, loading, error, submit } = useMakerRecommendation();
 
-  function handleSearch(query) {
-    if (!query.trim()) return;
-    setItemName(query.trim());
-    setResult(null);
-    setPanelState('loading');
-  }
+  const panelState = loading
+    ? 'loading'
+    : error
+    ? 'error'
+    : data
+    ? 'success'
+    : 'idle';
 
-  function handleCancel() {
-    clearTimeout(timerRef.current);
-    setPanelState('idle');
-    setResult(null);
-  }
+  const handleSubmit = useCallback(
+    (e) => {
+      e.preventDefault();
+      if (!itemName.trim() || !file || loading) return;
+      submit(itemName.trim(), file);
+    },
+    [itemName, file, loading, submit]
+  );
 
-  function handleRetry() {
-    setResult(null);
-    setPanelState('loading');
-  }
+  const handleRetry = useCallback(() => {
+    if (!itemName.trim() || !file) return;
+    submit(itemName.trim(), file);
+  }, [itemName, file, submit]);
 
-  function handleValidate() {
+  const handleValidate = useCallback(() => {
     navigate('/maker/validate?item=' + encodeURIComponent(itemName));
-  }
+  }, [navigate, itemName]);
+
+  const handleRemoveFile = useCallback(() => {
+    setFile(null);
+    setFileError('');
+  }, []);
+
+  const handleFileError = useCallback((msg) => {
+    setFileError(msg);
+  }, []);
+
+  const handleFileSelect = useCallback((f) => {
+    setFile(f);
+    setFileError('');
+  }, []);
+
+  const isDisabled = !itemName.trim() || !file || loading;
 
   return (
     <WorkbenchTemplate
@@ -71,17 +68,60 @@ export default function MakerPage() {
         />
       }
       inputZone={
-        <SearchBar
-          placeholder="Masukkan nama item pengadaan…"
-          loading={panelState === 'loading'}
-          onSubmit={handleSearch}
-        />
+        <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          {/* Item name */}
+          <div className="flex flex-col gap-1">
+            <label
+              htmlFor="item-name"
+              className="text-sm font-medium text-[var(--color-text-inv)]"
+            >
+              Nama Item
+            </label>
+            <input
+              id="item-name"
+              type="text"
+              value={itemName}
+              onChange={(e) => setItemName(e.target.value)}
+              placeholder="Masukkan nama item pengadaan…"
+              disabled={loading}
+              className="bg-surface border border-[var(--border-dark)] text-[var(--color-text-inv)] placeholder:text-[var(--color-text-inv-mute)] px-4 py-2 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-electric/50 disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+          </div>
+
+          {/* File upload */}
+          <div className="flex flex-col gap-1">
+            <span className="text-sm font-medium text-[var(--color-text-inv)]">
+              Dokumen Penawaran (PDF)
+            </span>
+            <FileUploader
+              file={file}
+              onFile={handleFileSelect}
+              onRemove={handleRemoveFile}
+              onError={handleFileError}
+              disabled={loading}
+              error={fileError}
+            />
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              variant="primary"
+              size="md"
+              disabled={isDisabled}
+              loading={loading}
+            >
+              Get Recommendation
+            </Button>
+          </div>
+        </form>
       }
       resultZone={
         <RecommendationPanel
           state={panelState}
-          result={result}
-          onCancel={handleCancel}
+          result={data}
+          error={error}
+          onCancel={() => {}}
           onRetry={handleRetry}
           onValidate={handleValidate}
         />

@@ -1,0 +1,113 @@
+import { memo, useRef, useState, useCallback } from 'react';
+import Icon from '../atoms/Icon';
+
+/**
+ * FileDropzone — drag-and-drop / click-to-pick file input.
+ * Props:
+ *   onFile     {(File) => void}   called when a valid file is picked
+ *   onError    {(string) => void} called when validation fails
+ *   accept     {string}           MIME type (default 'application/pdf')
+ *   maxSizeMB  {number}           max allowed size in MB (default 10)
+ *   disabled   {boolean}
+ */
+function FileDropzone({
+  onFile,
+  onError,
+  accept = 'application/pdf',
+  maxSizeMB = 10,
+  disabled = false,
+}) {
+  const inputRef = useRef(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const validate = useCallback(
+    (file) => {
+      if (file.type !== accept) {
+        onError('File harus berformat PDF.');
+        return false;
+      }
+      if (file.size > maxSizeMB * 1024 * 1024) {
+        onError(`Ukuran file melebihi batas ${maxSizeMB} MB.`);
+        return false;
+      }
+      return true;
+    },
+    [accept, maxSizeMB, onError]
+  );
+
+  const handleFile = useCallback(
+    (file) => {
+      if (!file) return;
+      if (validate(file)) onFile(file);
+    },
+    [validate, onFile]
+  );
+
+  const handleClick = () => {
+    if (!disabled) inputRef.current?.click();
+  };
+
+  const handleChange = (e) => {
+    handleFile(e.target.files?.[0]);
+    // reset so the same file can be re-selected after removal
+    e.target.value = '';
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    if (!disabled) setDragOver(true);
+  };
+
+  const handleDragLeave = () => setDragOver(false);
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (disabled) return;
+    handleFile(e.dataTransfer.files?.[0]);
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-label="Upload PDF"
+      onClick={handleClick}
+      onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && handleClick()}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      className={[
+        'flex flex-col items-center justify-center gap-3 px-6 py-10',
+        'border-2 border-dashed rounded-md transition-colors',
+        'cursor-pointer select-none',
+        dragOver
+          ? 'border-electric bg-electric/10 text-electric'
+          : disabled
+          ? 'border-[var(--border-light)] text-[var(--color-text-mute)] opacity-50 cursor-not-allowed'
+          : 'border-[var(--border-dark)] text-[var(--color-text-inv-mute)] hover:border-electric hover:text-electric',
+      ].join(' ')}
+    >
+      <Icon name="upload-cloud" size={32} strokeWidth={1.5} />
+      <p className="text-sm text-center leading-relaxed">
+        Drag &amp; drop PDF atau{' '}
+        <span className="text-electric font-medium">klik untuk pilih</span>
+      </p>
+      <p className="text-xs text-[var(--color-text-mute)]">
+        PDF · maks. {maxSizeMB} MB
+      </p>
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        className="sr-only"
+        tabIndex={-1}
+        onChange={handleChange}
+        disabled={disabled}
+      />
+    </div>
+  );
+}
+
+export default memo(FileDropzone);

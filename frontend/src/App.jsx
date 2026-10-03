@@ -9,6 +9,7 @@ import LandingPage from './pages/LandingPage';
 const NotFoundPage   = lazy(() => import('./pages/NotFoundPage'));
 const CheckerPage    = lazy(() => import('./pages/CheckerPage'));
 const RiskReportPage = lazy(() => import('./pages/RiskReportPage'));
+const MakerPage      = lazy(() => import('./pages/MakerPage'));
 const ComingSoonPage = lazy(() => import('./pages/ComingSoonPage'));
 
 // ─── Suspense fallback ───────────────────────────────────────────────────────
@@ -39,13 +40,7 @@ export default function App() {
               eta="Est. 1–2 minggu"
             />
           } />
-          <Route path="/maker" element={
-            <ComingSoonPage
-              title="Maker Agent"
-              description="Backend Maker Agent sudah selesai dan live-tested dengan Langflow (HTTP 200, ~62.9s). UI sedang diselesaikan untuk demo berikutnya."
-              eta="Backend ready · UI in progress"
-            />
-          } />
+          <Route path="/maker" element={<MakerPage />} />
           <Route path="/maker/validate" element={
             <ComingSoonPage
               title="Price Validation"
