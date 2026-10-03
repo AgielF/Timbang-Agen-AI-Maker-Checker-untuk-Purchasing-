@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from timbang.modules.procurement.repository import PriceQuoteRepository, VendorRepository
@@ -102,6 +102,21 @@ async def cross_validate_price(
     """Cross-validate prices for an item across all vendor quotes."""
     try:
         return await service.cross_validate_price(item_name=item_name)
+    except DomainError as exc:
+        raise _map_exception(exc) from exc
+
+
+@router.post("/items/recommend-with-file", response_model=RecommendationResponse)
+@limiter.limit("10/minute")
+async def recommend_with_file(
+    request: Request,
+    item_name: str = Form(...),
+    file: UploadFile = File(...),
+    service: ProcurementService = Depends(_build_service),
+) -> RecommendationResponse:
+    """Upload PDF/DOCX + item_name → Maker Agent Langflow → Recommendation."""
+    try:
+        return await service.get_recommendation_from_file(item_name=item_name, file=file)
     except DomainError as exc:
         raise _map_exception(exc) from exc
 

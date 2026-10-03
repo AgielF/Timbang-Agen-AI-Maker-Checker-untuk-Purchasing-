@@ -9,6 +9,7 @@ Rules (docs/agents/BACKEND_AGENTS.md):
 from __future__ import annotations
 
 import json
+import os
 import re
 import statistics
 import time
@@ -17,6 +18,7 @@ from decimal import Decimal
 
 import httpx
 import structlog
+from fastapi import UploadFile
 
 from timbang.modules.procurement.repository import PriceQuoteRepository, VendorRepository
 from timbang.modules.procurement.schemas import (
@@ -296,4 +298,143 @@ class ProcurementService:
                 pass
 
         # 8. Fallback: wrap raw text (e.g. purely natural-language LLM output)
+        return RecommendationResponse(raw_text=text, reason=text)
+
+    # ── Recommendation with file (Langflow Maker Agent) ───────────────────────
+
+    # Discovery notes (from /openapi.json, 2025):
+    #   Upload endpoint : POST /api/v1/files/upload/{flow_id}
+    #     - multipart/form-data, field "file"
+    #     - Returns: {"flowId": str, "file_path": str}
+    #   Run endpoint    : POST /api/v1/run/{flow_id_or_name}
+    #     - JSON body with "input_value", tweaks, etc.
+    #     - Tweaks keys: "File-bHzNP" (Read File node), "ChatInput-wh9pO" (Chat Input node)
+
+    _ALLOWED_EXTENSIONS = frozenset(
+        {".pdf", ".docx", ".doc", ".txt", ".csv", ".xlsx", ".xls", ".json"}
+    )
+    _MAX_FILE_SIZE_MB = 10
+
+    async def get_recommendation_from_file(
+        self,
+        item_name: str,
+        file: UploadFile,
+    ) -> RecommendationResponse:
+        """Upload file → Langflow Read File node → Maker Agent → Recommendation.
+
+        Steps:
+          1. Validate extension and size (≤ 10 MB).
+          2. Upload file to Langflow /api/v1/files/upload/{flow_id}.
+          3. Call /api/v1/run/{flow_id} with file_path tweak.
+          4. Parse Langflow response → RecommendationResponse.
+
+        Raises ValidationError on bad input, UpstreamError on Langflow failure.
+        NEVER logs api_key.
+        """
+        settings = get_settings()
+
+        # 1. Guard: flow ID must be configured
+        if not settings.langflow_maker_flow_id:
+            raise UpstreamError(
+                "LANGFLOW_MAKER_FLOW_ID belum dikonfigurasi. "
+                "Set env var LANGFLOW_MAKER_FLOW_ID sebelum menggunakan endpoint ini."
+            )
+
+        # 2. Validate extension
+        ext = os.path.splitext(file.filename or "")[1].lower()
+        if ext not in self._ALLOWED_EXTENSIONS:
+            raise ValidationError(
+                f"Format file tidak didukung: '{ext}'. "
+                f"Gunakan: {', '.join(sorted(self._ALLOWED_EXTENSIONS))}"
+            )
+
+        # 3. Read and validate size
+        content = await file.read()
+        max_bytes = self._MAX_FILE_SIZE_MB * 1024 * 1024
+        if len(content) > max_bytes:
+            raise ValidationError(
+                f"File terlalu besar: {len(content) / (1024*1024):.1f} MB. "
+                f"Maks {self._MAX_FILE_SIZE_MB} MB."
+            )
+
+        flow_id = settings.langflow_maker_flow_id
+        headers: dict[str, str] = {}
+        if settings.langflow_api_key:
+            headers["x-api-key"] = settings.langflow_api_key  # NEVER logged
+
+        content_type = file.content_type or "application/octet-stream"
+
+        try:
+            async with httpx.AsyncClient(timeout=settings.langflow_timeout_seconds) as client:
+                # 4. Upload file to Langflow (v1 files API — returns file_path)
+                upload_url = f"{settings.langflow_base_url}/api/v1/files/upload/{flow_id}"
+                upload_resp = await client.post(
+                    upload_url,
+                    headers=headers,
+                    files={"file": (file.filename, content, content_type)},
+                )
+                if upload_resp.status_code not in (200, 201):
+                    raise UpstreamError(
+                        f"Langflow file upload failed HTTP {upload_resp.status_code}: "
+                        f"{upload_resp.text[:300]}"
+                    )
+                upload_data = upload_resp.json()
+                file_path: str = upload_data["file_path"]
+
+                log.info(
+                    "langflow_file_uploaded",
+                    flow_id=flow_id,
+                    filename=file.filename,
+                    file_path=file_path,
+                )
+
+                # 5. Run flow with file_path tweak
+                run_url = f"{settings.langflow_base_url}/api/v1/run/{flow_id}"
+                t0 = time.monotonic()
+                run_resp = await client.post(
+                    run_url,
+                    headers={**headers, "Content-Type": "application/json"},
+                    json={
+                        # input_value feeds ChatInput — do NOT repeat it in tweaks
+                        "input_value": f"Ekstrak dan analisis: {item_name}",
+                        "input_type": "chat",
+                        "output_type": "chat",
+                        "tweaks": {
+                            "File-bHzNP": {"file_path": file_path},
+                        },
+                    },
+                )
+        except httpx.TimeoutException as exc:
+            raise UpstreamError(f"Langflow request timed out: {exc}") from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"Langflow HTTP error: {exc}") from exc
+
+        elapsed_ms = int((time.monotonic() - t0) * 1000)
+        log.info(
+            "langflow_maker_file_called",
+            flow_id=flow_id,
+            item_name=item_name,
+            status_code=run_resp.status_code,
+            elapsed_ms=elapsed_ms,
+            # api_key intentionally NOT logged
+        )
+
+        if run_resp.status_code != 200:
+            raise UpstreamError(
+                f"Langflow returned HTTP {run_resp.status_code}: {run_resp.text[:300]}"
+            )
+
+        try:
+            data = run_resp.json()
+        except json.JSONDecodeError as exc:
+            raise UpstreamError(f"Langflow response is not valid JSON: {exc}") from exc
+
+        text = _extract_chat_text(data)
+        parsed = _try_parse_json(text)
+        if parsed is not None:
+            try:
+                return _build_response(parsed)
+            except Exception:  # noqa: BLE001
+                pass
+
         return RecommendationResponse(raw_text=text, reason=text)
