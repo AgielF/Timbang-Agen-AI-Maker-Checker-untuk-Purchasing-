@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import NavLink from '../molecules/NavLink';
-import Button from '../atoms/Button';
 
 const NAV_LINKS = [
   { to: '/#features',      label: 'Product',  dimmed: false },
@@ -53,10 +52,6 @@ function NavBar({ activePath = '' }) {
           ))}
         </nav>
 
-        {/* CTA */}
-        <Button as={Link} to="/checker" variant="primary" size="sm">
-          Open Checker
-        </Button>
       </div>
     </header>
   );

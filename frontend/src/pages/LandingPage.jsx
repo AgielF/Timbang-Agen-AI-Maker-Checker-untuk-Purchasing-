@@ -12,7 +12,16 @@ const COMING_SOON_ITEMS = [
   {
     icon: 'search',
     title: 'Maker Agent',
-    caption: 'Backend ready. UI coming soon.',
+    caption: 'Analisis vendor + cross-validate harga live.',
+    hideBadge: true,
+    to: '/maker',
+  },
+  {
+    icon: 'check',
+    title: 'Checker Agent',
+    caption: 'Three-way matching PO/GR/Invoice + laporan risiko otomatis.',
+    hideBadge: true,
+    to: '/checker',
   },
   {
     icon: 'external-link',
