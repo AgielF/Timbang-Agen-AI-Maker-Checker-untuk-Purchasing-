@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # ── Vendor ──────────────────────────────────────────────────────────────────
 
@@ -80,23 +80,61 @@ class PriceValidationResult(BaseModel):
 
 
 class RecommendedItem(BaseModel):
-    """Per-item analysis from the Langflow Maker Agent."""
+    """Per-item analysis from the Langflow Maker Agent.
 
-    nama_item: str
-    harga_vendor: Decimal
-    harga_pasar_rata: Decimal | None = None
+    Numeric fields are Optional[float] so that None (normalised from
+    "Data tidak tersedia") is accepted by Pydantic without coercion errors.
+    """
+
+    nama_item: str = ""
+    harga_vendor: float | None = None
+    harga_pasar_rata: float | None = None
     selisih_persen: float | None = None
-    status: str
-    rekomendasi: str
+    status: str = ""
+    rekomendasi: str = ""
     sumber: list[str] = []
-    alasan: str
+    alasan: str = ""
+
+
+class Kesimpulan(BaseModel):
+    """Kesimpulan block from the Langflow Maker Agent output."""
+
+    total_penawaran: float | None = None
+    total_pasar: float | None = None
+    total_selisih_persen: float | None = None
+    skor_vendor: float | None = None
+    rekomendasi_vendor: str | None = None
+    estimasi_penghematan: float | None = None
+    ringkasan_alasan: str = ""
+
+    @field_validator(
+        "total_penawaran", "total_pasar", "total_selisih_persen",
+        "skor_vendor", "estimasi_penghematan",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_numeric(cls, v: object) -> float | None:
+        """Accept floats/ints as-is; convert numeric strings; null-out sentinels."""
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        if isinstance(v, str):
+            stripped = v.strip()
+            if stripped in ("Data tidak tersedia", ""):
+                return None
+            try:
+                return float(stripped.replace(",", "").replace("Rp", "").strip())
+            except ValueError:
+                return None
+        return None
 
 
 class RecommendationResponse(BaseModel):
     """Output of the Maker Agent recommendation flow (Langflow).
 
     New fields (from real Langflow output):
-      vendor_name, items, raw_text
+      vendor_name, items, kesimpulan, raw_text
 
     Legacy fields (kept for backward compat with existing tests):
       vendor_id, reason, estimated_saving, citations
@@ -105,6 +143,7 @@ class RecommendationResponse(BaseModel):
     # ── New Langflow fields ──
     vendor_name: str | None = None
     items: list[RecommendedItem] = []
+    kesimpulan: Kesimpulan | None = None
     raw_text: str | None = None  # populated when LLM output cannot be parsed
 
     # ── Legacy / fallback fields ──

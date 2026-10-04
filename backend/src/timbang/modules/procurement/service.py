@@ -110,13 +110,76 @@ def _try_parse_json(text: str) -> dict | None:
     return None
 
 
-def _build_response(parsed: dict) -> RecommendationResponse:
-    """Build a RecommendationResponse from a parsed Langflow JSON dict.
+_NA_SENTINEL = "Data tidak tersedia"
 
-    Handles both the new structured format (vendor_name + items[]) and the
-    legacy format (vendor_id + reason + estimated_saving) gracefully.
+
+def _normalize_num(v: object) -> float | None:
+    """Coerce a value to float, nulling out the 'Data tidak tersedia' sentinel."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    if isinstance(v, str):
+        stripped = v.strip()
+        if stripped in (_NA_SENTINEL, ""):
+            return None
+        try:
+            return float(stripped.replace(",", "").replace("Rp", "").strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _normalize_sumber(sumber: object) -> list[str]:
+    """Keep only valid URL strings from a sumber list."""
+    if not isinstance(sumber, list):
+        return []
+    return [s for s in sumber if isinstance(s, str) and s.startswith("http")]
+
+
+def _normalize_llm_output(data: dict) -> dict:
+    """Normalise LLM output so Pydantic model_validate won't fail.
+
+    - Converts 'Data tidak tersedia' sentinel strings to None for numeric fields.
+    - Tries to parse numeric strings (e.g. "9750000") to float.
+    - Filters sumber lists so only valid URLs remain.
     """
-    return RecommendationResponse.model_validate(parsed)
+    if not isinstance(data, dict):
+        return data
+
+    # Normalise items[]
+    for item in data.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        for k in ("harga_vendor", "harga_pasar_rata", "selisih_persen"):
+            if k in item:
+                item[k] = _normalize_num(item[k])
+        if "sumber" in item:
+            item["sumber"] = _normalize_sumber(item["sumber"])
+
+    # Normalise kesimpulan{}
+    kesimpulan = data.get("kesimpulan")
+    if isinstance(kesimpulan, dict):
+        for k in (
+            "total_penawaran",
+            "total_pasar",
+            "total_selisih_persen",
+            "skor_vendor",
+            "estimasi_penghematan",
+        ):
+            if k in kesimpulan:
+                kesimpulan[k] = _normalize_num(kesimpulan[k])
+
+    return data
+
+
+def _build_response(parsed: dict) -> RecommendationResponse:
+    """Normalise + validate a parsed Langflow JSON dict into RecommendationResponse.
+
+    Raises pydantic.ValidationError on schema mismatch (caller should catch).
+    """
+    normalised = _normalize_llm_output(parsed)
+    return RecommendationResponse.model_validate(normalised)
 
 
 class ProcurementService:
@@ -294,8 +357,12 @@ class ProcurementService:
         if parsed is not None:
             try:
                 return _build_response(parsed)
-            except Exception:  # noqa: BLE001 — validation errors from Pydantic
-                pass
+            except Exception as exc:  # noqa: BLE001 — validation errors from Pydantic
+                log.warning(
+                    "recommendation_parse_failed",
+                    error=str(exc),
+                    raw_preview=text[:300],
+                )
 
         # 8. Fallback: wrap raw text (e.g. purely natural-language LLM output)
         return RecommendationResponse(raw_text=text, reason=text)
@@ -434,7 +501,11 @@ class ProcurementService:
         if parsed is not None:
             try:
                 return _build_response(parsed)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "recommendation_parse_failed",
+                    error=str(exc),
+                    raw_preview=text[:300],
+                )
 
         return RecommendationResponse(raw_text=text, reason=text)
