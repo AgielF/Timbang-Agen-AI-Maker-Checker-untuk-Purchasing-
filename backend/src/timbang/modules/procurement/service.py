@@ -131,7 +131,17 @@ def _normalize_num(v: object) -> float | None:
 
 
 def _normalize_sumber(sumber: object) -> list[str]:
-    """Keep only valid URL strings from a sumber list."""
+    """Keep only valid URL strings from a sumber field.
+    
+    Handles: list of URLs, single URL string, sentinel string, None.
+    """
+    if sumber is None:
+        return []
+    if isinstance(sumber, str):
+        s = sumber.strip()
+        if s == _NA_SENTINEL or not s.startswith("http"):
+            return []
+        return [s]
     if not isinstance(sumber, list):
         return []
     return [s for s in sumber if isinstance(s, str) and s.startswith("http")]
@@ -148,6 +158,8 @@ def _normalize_llm_output(data: dict) -> dict:
         return data
 
     # Normalise items[]
+    if not isinstance(data.get("items"), list):
+        data["items"] = []
     for item in data.get("items") or []:
         if not isinstance(item, dict):
             continue
@@ -159,7 +171,10 @@ def _normalize_llm_output(data: dict) -> dict:
 
     # Normalise kesimpulan{}
     kesimpulan = data.get("kesimpulan")
-    if isinstance(kesimpulan, dict):
+    if isinstance(kesimpulan, str):
+        # LLM kadang return kesimpulan sebagai string narasi
+        data["kesimpulan"] = {"ringkasan_alasan": kesimpulan.strip()}
+    elif isinstance(kesimpulan, dict):
         for k in (
             "total_penawaran",
             "total_pasar",
@@ -169,6 +184,9 @@ def _normalize_llm_output(data: dict) -> dict:
         ):
             if k in kesimpulan:
                 kesimpulan[k] = _normalize_num(kesimpulan[k])
+    else:
+        # None atau tipe lain → set None (schema terima None)
+        data["kesimpulan"] = None
 
     return data
 
