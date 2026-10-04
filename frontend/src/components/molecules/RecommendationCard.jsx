@@ -61,7 +61,7 @@ function HeroStats({ kesimpulan }) {
   const skor            = kesimpulan.skor_vendor;
 
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
       {/* Total Penawaran */}
       <div className="flex flex-col gap-0.5 border border-[var(--border-dark)] p-4">
         <span className="text-xs text-[var(--color-text-inv-mute)] uppercase tracking-wider">
@@ -90,23 +90,33 @@ function HeroStats({ kesimpulan }) {
         )}
       </div>
 
-      {/* Skor vendor — spans both columns only if present */}
-      {typeof skor === 'number' && isFinite(skor) && (
-        <div className="col-span-2 flex items-center gap-2 border border-[var(--border-dark)] px-4 py-3">
-          <span className="text-xs text-[var(--color-text-inv-mute)] uppercase tracking-wider">
-            Skor Vendor
-          </span>
-          <span className="font-mono tabular-nums text-sm font-semibold text-[var(--color-text-inv)]">
+      {/* Skor vendor */}
+      <div className="flex flex-col gap-0.5 border border-[var(--border-dark)] p-4">
+        <span className="text-xs text-[var(--color-text-inv-mute)] uppercase tracking-wider">
+          Skor Vendor
+        </span>
+        {typeof skor === 'number' && isFinite(skor) ? (
+          <span
+            className={`font-mono tabular-nums text-2xl font-bold ${
+              skor >= 80
+                ? 'text-emerald'
+                : skor >= 50
+                ? 'text-warning'
+                : 'text-critical'
+            }`}
+          >
             {skor}/100
           </span>
-        </div>
-      )}
+        ) : (
+          <span className="text-sm italic text-[var(--color-text-inv-mute)]">Belum tersedia</span>
+        )}
+      </div>
     </div>
   );
 }
 
 /** Horizontal-scroll items table */
-function ItemsTable({ items }) {
+function ItemsTable({ items, kesimpulan }) {
   if (!items || items.length === 0) {
     return (
       <div className="border border-[var(--border-dark)] flex flex-col items-center justify-center gap-2 py-10 px-6 text-center">
@@ -125,13 +135,14 @@ function ItemsTable({ items }) {
       <table className="w-full text-sm min-w-[640px]">
         <thead>
           <tr className="border-b border-[var(--border-dark)] bg-surface">
-            {['Item', 'Harga Vendor', 'Harga Pasar', 'Selisih', 'Status', 'Rekomendasi'].map((h) => (
+            {['Item', 'Qty', 'Harga Vendor', 'Total', 'Harga Pasar', 'Selisih', 'Status', 'Rekomendasi'].map((h) => (
               <th
                 key={h}
                 className={[
                   'px-4 py-2 text-xs font-medium uppercase tracking-wider text-[var(--color-text-inv-mute)]',
                   h === 'Item' ? 'text-left' : 'text-right',
                   h === 'Status' || h === 'Rekomendasi' ? 'text-center' : '',
+                  (h === 'Qty' || h === 'Total') ? 'hidden md:table-cell' : '',
                 ].join(' ')}
               >
                 {h}
@@ -177,9 +188,19 @@ function ItemsTable({ items }) {
                   )}
                 </td>
 
+                {/* Qty */}
+                <td className="hidden md:table-cell px-4 py-3 text-right font-mono tabular-nums text-[var(--color-text-inv)]">
+                  {isAvailable(item.qty) && isAvailable(item.satuan) ? `${item.qty} ${item.satuan}` : '—'}
+                </td>
+
                 {/* Harga vendor */}
                 <td className="px-4 py-3 text-right font-mono tabular-nums text-[var(--color-text-inv)]">
                   {hargaVendor ?? '—'}
+                </td>
+
+                {/* Total */}
+                <td className="hidden md:table-cell px-4 py-3 text-right font-mono tabular-nums text-[var(--color-text-inv)]">
+                  {fmtIDR(item.total_price_vendor) ?? '—'}
                 </td>
 
                 {/* Harga pasar */}
@@ -214,6 +235,21 @@ function ItemsTable({ items }) {
             );
           })}
         </tbody>
+        <tfoot className="border-t-2 border-[var(--border-dark)] bg-surface">
+          <tr>
+            <td colSpan={1} className="px-4 py-3 text-right font-bold text-[var(--color-text-inv)] md:hidden">
+              TOTAL
+            </td>
+            <td colSpan={3} className="hidden md:table-cell px-4 py-3 text-right font-bold text-[var(--color-text-inv)]">
+              TOTAL
+            </td>
+            <td className="px-4 py-3 text-right font-mono tabular-nums font-bold text-[var(--color-text-inv)]">
+              {fmtIDR(kesimpulan?.total_penawaran) ?? '—'}
+            </td>
+            <td colSpan={4} className="hidden md:table-cell px-4 py-3"></td>
+            <td colSpan={3} className="md:hidden px-4 py-3"></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   );
@@ -250,6 +286,8 @@ function SumberNotice({ items }) {
  */
 function RecommendationCard({ result = {}, onValidate }) {
   const vendorName        = result.vendor_name;
+  const vendorContact     = result.vendor_contact;
+  const vendorAddress     = result.vendor_address;
   const items             = result.items ?? [];
   const kesimpulan        = result.kesimpulan ?? null;
   const ringkasanAlasan   = kesimpulan?.ringkasan_alasan ?? '';
@@ -263,12 +301,30 @@ function RecommendationCard({ result = {}, onValidate }) {
         <span className="text-xs text-[var(--color-text-inv-mute)] uppercase tracking-wider">
           Harga yang Direkomendasikan
         </span>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <h2 className="text-2xl font-semibold text-[var(--color-text-inv)] leading-tight">
-            {isAvailable(vendorName) ? vendorName : '—'}
-          </h2>
-          {isAvailable(rekomendasiVendor) && (
-            <RekomendasiBadge value={rekomendasiVendor} />
+        <div className="flex flex-col gap-1">
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <h2 className="text-2xl font-semibold text-[var(--color-text-inv)] leading-tight">
+              {isAvailable(vendorName) ? vendorName : '—'}
+            </h2>
+            {isAvailable(rekomendasiVendor) && (
+              <RekomendasiBadge value={rekomendasiVendor} />
+            )}
+          </div>
+          {(isAvailable(vendorContact) || isAvailable(vendorAddress)) && (
+            <div className="flex flex-col gap-1 mt-1">
+              {isAvailable(vendorContact) && (
+                <div className="flex items-center gap-2 text-sm text-[var(--color-text-inv-mute)]">
+                  <Icon name="mail" size={14} />
+                  <span>{vendorContact}</span>
+                </div>
+              )}
+              {isAvailable(vendorAddress) && (
+                <div className="flex items-center gap-2 text-sm text-[var(--color-text-inv-mute)]">
+                  <Icon name="map-pin" size={14} />
+                  <span>{vendorAddress}</span>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
@@ -281,7 +337,7 @@ function RecommendationCard({ result = {}, onValidate }) {
         <span className="text-xs text-[var(--color-text-inv-mute)] uppercase tracking-wider">
           Detail Item
         </span>
-        <ItemsTable items={items} />
+        <ItemsTable items={items} kesimpulan={kesimpulan} />
         <SumberNotice items={items} />
       </div>
 

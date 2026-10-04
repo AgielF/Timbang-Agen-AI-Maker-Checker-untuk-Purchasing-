@@ -19,22 +19,22 @@ export default function MakerPage() {
   const panelState = loading
     ? 'loading'
     : error
-    ? 'error'
-    : data
-    ? 'success'
-    : 'idle';
+      ? 'error'
+      : data
+        ? 'success'
+        : 'idle';
 
   const handleSubmit = useCallback(
     (e) => {
       e.preventDefault();
-      if (!itemName.trim() || !file || loading) return;
+      if (!file || loading) return;        // ← DIUBAH (dulu: !itemName.trim() || !file || loading)
       submit(itemName.trim(), file);
     },
     [itemName, file, loading, submit]
   );
 
   const handleRetry = useCallback(() => {
-    if (!itemName.trim() || !file) return;
+    if (!file) return;                     // ← DIUBAH (dulu: !itemName.trim() || !file)
     submit(itemName.trim(), file);
   }, [itemName, file, submit]);
 
@@ -121,7 +121,7 @@ export default function MakerPage() {
           state={panelState}
           result={data}
           error={error}
-          onCancel={() => {}}
+          onCancel={() => { }}
           onRetry={handleRetry}
           onValidate={handleValidate}
         />
