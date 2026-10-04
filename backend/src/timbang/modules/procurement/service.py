@@ -200,6 +200,54 @@ def _build_response(parsed: dict) -> RecommendationResponse:
     return RecommendationResponse.model_validate(normalised)
 
 
+def _apply_math_check(response: RecommendationResponse) -> RecommendationResponse:
+    """Deterministic math check: verify sum(items.total_price_vendor) == kesimpulan.total_penawaran.
+
+    Populates kesimpulan math_check_* fields in-place and returns the response.
+    Skips silently if kesimpulan is None or total_penawaran is None.
+    """
+    if response.kesimpulan is None:
+        return response
+
+    calculated = sum(
+        item.total_price_vendor
+        for item in response.items
+        if item.total_price_vendor is not None
+    )
+
+    k = response.kesimpulan
+    k.total_penawaran_calculated = calculated if calculated > 0 else None
+
+    if k.total_penawaran is None or calculated == 0:
+        k.math_check_status = "OK"
+        k.math_check_note = "Total penawaran tidak dapat diverifikasi (data tidak lengkap)."
+        return response
+
+    discrepancy = k.total_penawaran - calculated
+    percent = (discrepancy / k.total_penawaran) * 100
+
+    k.math_discrepancy = round(discrepancy, 2)
+    k.math_discrepancy_percent = round(percent, 4)
+
+    abs_pct = abs(percent)
+    if abs_pct > 5.0:
+        k.math_check_status = "CRITICAL"
+        k.math_check_note = (
+            f"Ditemukan inkonsistensi matematis {percent:.2f}% (Rp {discrepancy:,.0f}) "
+            f"antara total penawaran dan jumlah item."
+        )
+    elif abs_pct > 1.0:
+        k.math_check_status = "WARNING"
+        k.math_check_note = (
+            f"Selisih {percent:.2f}% antara total penawaran dan penjumlahan item — periksa kembali."
+        )
+    else:
+        k.math_check_status = "OK"
+        k.math_check_note = "Konsisten."
+
+    return response
+
+
 class ProcurementService:
     """Business logic for the Maker Agent procurement context."""
 
@@ -523,7 +571,7 @@ class ProcurementService:
         parsed = _try_parse_json(text)
         if parsed is not None:
             try:
-                return _build_response(parsed)
+                return _apply_math_check(_build_response(parsed))
             except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "recommendation_parse_failed",

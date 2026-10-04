@@ -111,6 +111,12 @@ class Kesimpulan(BaseModel):
     rekomendasi_vendor: str | None = None
     estimasi_penghematan: float | None = None
     ringkasan_alasan: str = ""
+    # ── Deterministic math check fields ──
+    total_penawaran_calculated: float | None = None
+    math_discrepancy: float | None = None
+    math_discrepancy_percent: float | None = None
+    math_check_status: str = "OK"
+    math_check_note: str = ""
 
     @field_validator(
         "total_penawaran", "total_pasar", "total_selisih_persen",
