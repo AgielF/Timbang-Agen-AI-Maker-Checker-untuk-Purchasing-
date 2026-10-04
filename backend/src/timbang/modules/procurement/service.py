@@ -163,7 +163,7 @@ def _normalize_llm_output(data: dict) -> dict:
     for item in data.get("items") or []:
         if not isinstance(item, dict):
             continue
-        for k in ("harga_vendor", "harga_pasar_rata", "selisih_persen"):
+        for k in ("harga_vendor", "harga_pasar_rata", "selisih_persen", "total_price_vendor"):
             if k in item:
                 item[k] = _normalize_num(item[k])
         if "sumber" in item:

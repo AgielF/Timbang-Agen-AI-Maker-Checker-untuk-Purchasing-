@@ -86,6 +86,8 @@ class RecommendedItem(BaseModel):
     "Data tidak tersedia") is accepted by Pydantic without coercion errors.
     """
 
+    model_config = ConfigDict(extra="ignore")
+
     nama_item: str = ""
     harga_vendor: float | None = None
     harga_pasar_rata: float | None = None
@@ -94,6 +96,9 @@ class RecommendedItem(BaseModel):
     rekomendasi: str = ""
     sumber: list[str] = []
     alasan: str = ""
+    qty: int | None = None
+    satuan: str = ""
+    total_price_vendor: float | None = None
 
 
 class Kesimpulan(BaseModel):
@@ -141,7 +146,11 @@ class RecommendationResponse(BaseModel):
     """
 
     # ── New Langflow fields ──
+    model_config = ConfigDict(extra="ignore")
+
     vendor_name: str | None = None
+    vendor_contact: str = ""
+    vendor_address: str = ""
     items: list[RecommendedItem] = []
     kesimpulan: Kesimpulan | None = None
     raw_text: str | None = None  # populated when LLM output cannot be parsed
