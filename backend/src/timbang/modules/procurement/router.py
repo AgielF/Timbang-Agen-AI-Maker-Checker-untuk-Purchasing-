@@ -110,7 +110,7 @@ async def cross_validate_price(
 @limiter.limit("10/minute")
 async def recommend_with_file(
     request: Request,
-    item_name: str = Form(...),
+    item_name: str = Form(""),
     file: UploadFile = File(...),
     service: ProcurementService = Depends(_build_service),
 ) -> RecommendationResponse:

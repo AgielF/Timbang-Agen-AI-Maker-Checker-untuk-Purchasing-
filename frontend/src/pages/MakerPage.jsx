@@ -56,7 +56,7 @@ export default function MakerPage() {
     setFileError('');
   }, []);
 
-  const isDisabled = !itemName.trim() || !file || loading;
+  const isDisabled = !file || loading;
 
   return (
     <WorkbenchTemplate
@@ -75,14 +75,14 @@ export default function MakerPage() {
               htmlFor="item-name"
               className="text-sm font-medium text-[var(--color-text-inv)]"
             >
-              Nama Item
+              Fokus Item (opsional)
             </label>
             <input
               id="item-name"
               type="text"
               value={itemName}
               onChange={(e) => setItemName(e.target.value)}
-              placeholder="Masukkan nama item pengadaan…"
+              placeholder="Kosongkan untuk scan semua item dalam PDF"
               disabled={loading}
               className="bg-surface border border-[var(--border-dark)] text-[var(--color-text-inv)] placeholder:text-[var(--color-text-inv-mute)] px-4 py-2 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-electric/50 disabled:opacity-50 disabled:cursor-not-allowed"
             />

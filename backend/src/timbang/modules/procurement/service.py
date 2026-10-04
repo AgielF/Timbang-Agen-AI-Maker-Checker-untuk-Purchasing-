@@ -473,6 +473,11 @@ class ProcurementService:
                     file_path=file_path,
                 )
 
+                if item_name and item_name.strip():
+                    user_instruksi = f"Ekstrak dan analisis khusus item: {item_name.strip()}"
+                else:
+                    user_instruksi = "Ekstrak dan analisis SEMUA item yang ada dalam dokumen penawaran vendor ini."
+
                 # 5. Run flow with file_path tweak
                 run_url = f"{settings.langflow_base_url}/api/v1/run/{flow_id}"
                 t0 = time.monotonic()
@@ -481,7 +486,7 @@ class ProcurementService:
                     headers={**headers, "Content-Type": "application/json"},
                     json={
                         # input_value feeds ChatInput — do NOT repeat it in tweaks
-                        "input_value": f"Ekstrak dan analisis: {item_name}",
+                        "input_value": user_instruksi,
                         "input_type": "chat",
                         "output_type": "chat",
                         "tweaks": {
