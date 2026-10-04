@@ -52,6 +52,40 @@ function StatusBadge({ value }) {
 
 // ── Sub-sections ──────────────────────────────────────────────────────────────
 
+/** Math check warning banner — shown only for CRITICAL or WARNING status */
+function MathCheckBanner({ kesimpulan }) {
+  if (!kesimpulan) return null;
+  const status = kesimpulan.math_check_status;
+  if (status !== 'CRITICAL' && status !== 'WARNING') return null;
+
+  const isCritical = status === 'CRITICAL';
+  return (
+    <div
+      className={[
+        'flex items-start gap-3 p-4 border-l-4 rounded-r',
+        isCritical
+          ? 'bg-critical/5 border-critical'
+          : 'bg-warning/5 border-warning',
+      ].join(' ')}
+      role="alert"
+    >
+      <span className={`mt-0.5 flex-shrink-0 ${isCritical ? 'text-critical' : 'text-warning'}`}>
+        <Icon name="alert-triangle" size={18} strokeWidth={2} />
+      </span>
+      <div className="flex flex-col gap-0.5">
+        <span className={`text-sm font-semibold leading-tight ${isCritical ? 'text-critical' : 'text-warning'}`}>
+          {isCritical ? 'Inkonsistensi Matematis Terdeteksi' : 'Peringatan Inkonsistensi'}
+        </span>
+        {kesimpulan.math_check_note && (
+          <span className="text-xs text-[var(--color-text-inv-mute)] leading-relaxed">
+            {kesimpulan.math_check_note}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** 2-column hero stats row */
 function HeroStats({ kesimpulan }) {
   if (!kesimpulan) return null;
@@ -329,7 +363,10 @@ function RecommendationCard({ result = {}, onValidate }) {
         </div>
       </div>
 
-      {/* ── 2. HERO STATS ────────────────────────────────────────────────── */}
+      {/* ── 2. MATH CHECK BANNER ───────────────────────────────────────── */}
+      <MathCheckBanner kesimpulan={kesimpulan} />
+
+      {/* ── 3. HERO STATS ────────────────────────────────────────────────── */}
       <HeroStats kesimpulan={kesimpulan} />
 
       {/* ── 3. TABLE ITEMS ───────────────────────────────────────────────── */}
