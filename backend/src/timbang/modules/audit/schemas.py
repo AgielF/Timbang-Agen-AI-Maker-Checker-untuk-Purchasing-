@@ -5,10 +5,21 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict
 
 # ── AuditFinding ─────────────────────────────────────────────────────────────
+
+
+class FraudIndication(StrEnum):
+    PRICE_MANIPULATION = "PRICE_MANIPULATION"
+    QTY_DISCREPANCY = "QTY_DISCREPANCY"
+    SPLIT_PO = "SPLIT_PO"
+    DUPLICATE_INVOICE = "DUPLICATE_INVOICE"
+    UNAUTHORIZED_APPROVAL = "UNAUTHORIZED_APPROVAL"
+    INCOMPLETE_DOCS = "INCOMPLETE_DOCS"
+    UNKNOWN = "UNKNOWN"
 
 
 class AuditFindingCreate(BaseModel):
@@ -22,6 +33,7 @@ class AuditFindingCreate(BaseModel):
     evidence_url: str | None = None
     sop_clause_citation: str | None = None
     evidence_type: str = ""
+    indication_label: FraudIndication = FraudIndication.UNKNOWN
 
 
 class AuditFindingRead(BaseModel):
@@ -38,6 +50,7 @@ class AuditFindingRead(BaseModel):
     evidence_url: str | None = None
     sop_clause_citation: str | None = None
     evidence_type: str = ""
+    indication_label: FraudIndication = FraudIndication.UNKNOWN
     created_at: datetime
 
 

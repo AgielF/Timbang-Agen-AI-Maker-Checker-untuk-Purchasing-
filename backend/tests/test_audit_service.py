@@ -7,7 +7,7 @@ from decimal import Decimal
 import pytest
 
 from timbang.modules.audit.repository import AuditFindingRepository, CheckResultRepository
-from timbang.modules.audit.schemas import DocumentData
+from timbang.modules.audit.schemas import DocumentData, FraudIndication
 from timbang.modules.audit.service import AuditService, _citation_guard
 
 
@@ -158,10 +158,33 @@ async def test_generate_risk_report_persists_findings(session):
     assert len(report.findings) >= 1
     assert all(f.evidence_url or f.sop_clause_citation for f in report.findings)
     assert all(f.evidence_type for f in report.findings)
+    assert any(f.indication_label == FraudIndication.QTY_DISCREPANCY for f in report.findings)
+    assert any(f.indication_label == FraudIndication.PRICE_MANIPULATION for f in report.findings)
     # Findings must be persisted — verify via repository
     findings = await svc._finding_repo.list_by_transaction("TXN-001")
     assert len(findings) >= 1
     assert all(f.evidence_url or f.sop_clause_citation for f in findings)
+
+
+@pytest.mark.asyncio
+async def test_generate_risk_report_labels_missing_level2_approval(session):
+    """A high-value transaction without L2 approval gets an approval label."""
+    svc = _make_service(session)
+    po = _doc("100", "150000000", ref="PO-2026-003")
+    gr = _doc("100", "150000000", ref="GR-2026-003")
+    invoice = _doc("100", "150000000", ref="INV-2026-003")
+
+    report = await svc.generate_risk_report(
+        transaction_id="TXN-003",
+        po_data=po,
+        gr_data=gr,
+        invoice_data=invoice,
+        has_level2_approval=False,
+        has_complete_docs=True,
+    )
+
+    assert len(report.findings) == 1
+    assert report.findings[0].indication_label == FraudIndication.UNAUTHORIZED_APPROVAL
 
 
 @pytest.mark.asyncio

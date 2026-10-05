@@ -17,6 +17,7 @@ from timbang.modules.audit.schemas import (
     AuditFindingRead,
     CheckResultCreate,
     DocumentData,
+    FraudIndication,
     MatchResult,
     RiskReportResponse,
     SopValidationResult,
@@ -41,6 +42,28 @@ def _citation_guard(findings: list[dict]) -> list[dict]:
                 f"{finding.get('description', '?')[:80]}"
             )
     return valid
+
+
+def _indication_for_discrepancy(discrepancy: str) -> FraudIndication:
+    text = discrepancy.lower()
+    if "quantity" in text:
+        return FraudIndication.QTY_DISCREPANCY
+    if "amount" in text:
+        return FraudIndication.PRICE_MANIPULATION
+    if "duplicate" in text:
+        return FraudIndication.DUPLICATE_INVOICE
+    if "split" in text:
+        return FraudIndication.SPLIT_PO
+    return FraudIndication.UNKNOWN
+
+
+def _indication_for_sop_violation(violation: str) -> FraudIndication:
+    text = violation.lower()
+    if "level2" in text or "approval" in text or "l2" in text:
+        return FraudIndication.UNAUTHORIZED_APPROVAL
+    if "complete" in text or "docs" in text:
+        return FraudIndication.INCOMPLETE_DOCS
+    return FraudIndication.UNKNOWN
 
 
 class AuditService:
@@ -199,6 +222,7 @@ class AuditService:
                             "SOP-01: Three-way match tolerance ±2% qty, ±1% amount"
                         ),
                         evidence_type="DISCREPANCY",
+                        indication_label=_indication_for_discrepancy(disc),
                     )
                     pending_findings.append(
                         {
@@ -240,6 +264,7 @@ class AuditService:
                     sop_reference="SOP_VALIDATION",
                     sop_clause_citation=sop_citation,
                     evidence_type="SOP_THRESHOLD",
+                    indication_label=_indication_for_sop_violation(violation),
                 )
                 pending_findings.append(
                     {
