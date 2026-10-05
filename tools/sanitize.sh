@@ -54,7 +54,8 @@ echo
 
 # ---------- 2. Pola secret pada perubahan staged ----------
 echo "[2/3] Scan pola secret pada diff staged..."
-PATTERNS='sk-[A-Za-z0-9_-]{16,}|AIza[0-9A-Za-z_-]{20,}|ghp_[A-Za-z0-9]{20,}|gho_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|9YD6Y15|-----BEGIN [A-Z ]*PRIVATE KEY-----|Bearer [A-Za-z0-9._-]{20,}'
+# ⚠️ Setiap alternatif diawali \b (word boundary) supaya "risk-" tidak match "sk-".
+PATTERNS='\bsk-[A-Za-z0-9_-]{16,}|\bAIza[0-9A-Za-z_-]{20,}|\bghp_[A-Za-z0-9]{20,}|\bgho_[A-Za-z0-9]{20,}|\bAKIA[0-9A-Z]{16}|\b9YD6Y15|-----BEGIN [A-Z ]*PRIVATE KEY-----|\bBearer [A-Za-z0-9._-]{20,}'
 
 HITS=$(git diff --cached -U0 -- . "${SCAN_EXCLUDE[@]}" 2>/dev/null \
         | grep -E '^\+' \
@@ -77,15 +78,16 @@ for f in .env mcp.json; do
       echo "${GREEN}OK${NC} — $f ada tapi ter-ignore."
     else
       echo "${YELLOW}[WARN]${NC} $f ada dan TIDAK ter-ignore oleh .gitignore."
+      FAIL=1
     fi
   fi
 done
-for d in .bob .langflow; do
-  [ -d "$d" ] && echo "${YELLOW}[WARN]${NC} direktori $d ada di working tree — pastikan tidak ter-stage."
-done
+if [ "$FAIL" -eq 0 ]; then
+  echo "${GREEN}OK${NC} — tidak ada file sensitif yang bocor."
+fi
 echo
 
-# ---------- Hasil ----------
+# ---------- Ringkasan ----------
 if [ "$FAIL" -eq 0 ]; then
   echo "${GREEN}==> LULUS — aman untuk commit.${NC}"
   exit 0
