@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 # ── AuditFinding ─────────────────────────────────────────────────────────────
 
@@ -122,6 +122,19 @@ class DocumentExtraction(BaseModel):
     ppn_amount: float | None = None
     npwp_vendor: str = ""
     raw_text: str | None = None
+
+    @field_validator(
+        "document_type",
+        "reference",
+        "currency",
+        "tax_invoice_ref",
+        "npwp_vendor",
+        mode="before",
+    )
+    @classmethod
+    def _null_to_empty_string(cls, value: object) -> object:
+        """Coerce nullable LLM string fields to empty strings before validation."""
+        return "" if value is None else value
 
 
 class MultiDocumentExtraction(BaseModel):

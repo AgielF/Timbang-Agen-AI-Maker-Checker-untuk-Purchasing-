@@ -380,6 +380,19 @@ class AuditService:
             reference=gr_extraction.reference,
             npwp_vendor=gr_extraction.npwp_vendor,
         )
+        # Deterministic fallback: derive GR value from received quantity only
+        # when the LLM did not extract a financial amount.
+        if gr_data.amount is None or gr_data.amount == 0:
+            if po_data.amount > 0 and po_data.quantity > 0 and gr_data.quantity > 0:
+                gr_data.amount = po_data.amount * (gr_data.quantity / po_data.quantity)
+                log.info(
+                    "gr_amount_fallback_computed",
+                    po_amount=str(po_data.amount),
+                    po_qty=str(po_data.quantity),
+                    gr_qty=str(gr_data.quantity),
+                    computed_gr_amount=str(gr_data.amount),
+                )
+
         invoice_data = DocumentData(
             quantity=to_decimal(invoice_extraction.quantity) or Decimal("0"),
             amount=to_decimal(invoice_extraction.amount) or Decimal("0"),
@@ -391,9 +404,14 @@ class AuditService:
             dpp_amount=to_decimal(invoice_extraction.dpp_amount),
         )
 
+        if not gr_data.currency:
+            gr_data.currency = po_data.currency or "IDR"
+        if not invoice_data.currency:
+            invoice_data.currency = po_data.currency or "IDR"
+
         if tax_invoice_extraction is not None:
             invoice_data.tax_invoice_ref = (
-                tax_invoice_extraction.tax_invoice_ref or invoice_data.tax_invoice_ref
+                tax_invoice_extraction.reference or invoice_data.tax_invoice_ref
             )
             invoice_data.dpp_amount = (
                 to_decimal(tax_invoice_extraction.dpp_amount)

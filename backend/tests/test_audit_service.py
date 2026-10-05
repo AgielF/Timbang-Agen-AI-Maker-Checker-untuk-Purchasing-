@@ -12,11 +12,18 @@ import pytest
 from fastapi import UploadFile
 
 from timbang.modules.audit.repository import AuditFindingRepository, CheckResultRepository
-from timbang.modules.audit.schemas import DocumentData, FraudIndication
+from timbang.modules.audit.schemas import (
+    DocumentData,
+    DocumentExtraction,
+    FraudIndication,
+    MultiDocumentExtraction,
+    RiskReportResponse,
+)
 from timbang.modules.audit.service import (
     AuditService,
     _citation_guard,
     _indication_for_discrepancy,
+    _parse_multi_document_extraction,
 )
 from timbang.shared.core.exceptions import ValidationError
 
@@ -69,7 +76,7 @@ def _multi_document_text(*, include_tax: bool = True) -> str:
     if include_tax:
         documents["tax_invoice"] = {
             "document_type": "TAX_INVOICE",
-            "tax_invoice_ref": "010.000-26.00000001",
+            "reference": "010.000-26.00000001",
             "dpp_amount": 100000,
             "ppn_amount": 11000,
             "npwp_vendor": "123456789012345",
@@ -118,6 +125,133 @@ def _mock_langflow_post(
         )
 
     return mock_post
+
+
+def test_parse_multi_document_extraction_with_null_fields():
+    text = json.dumps(
+        {
+            "po": {
+                "reference": "PO-001",
+                "quantity": 100,
+                "amount": 100000000,
+                "currency": None,
+                "tax_invoice_ref": None,
+                "npwp_vendor": None,
+            },
+            "gr": {
+                "reference": "GR-001",
+                "quantity": 95,
+                "amount": None,
+                "currency": None,
+                "document_type": None,
+            },
+            "invoice": {
+                "reference": None,
+                "quantity": 100,
+                "amount": 111000000,
+                "currency": "IDR",
+            },
+        }
+    )
+
+    extraction = _parse_multi_document_extraction(text)
+
+    assert extraction.raw_text is None
+    assert extraction.po is not None
+    assert extraction.po.reference == "PO-001"
+    assert extraction.po.currency == ""
+    assert extraction.po.tax_invoice_ref == ""
+    assert extraction.po.npwp_vendor == ""
+    assert extraction.gr is not None
+    assert extraction.gr.amount is None
+    assert extraction.gr.currency == ""
+    assert extraction.gr.document_type == ""
+    assert extraction.invoice is not None
+    assert extraction.invoice.reference == ""
+    assert extraction.invoice.currency == "IDR"
+
+
+@pytest.mark.asyncio
+async def test_gr_amount_fallback_from_po_when_null(session):
+    """If GR amount is missing, derive its value proportionally from PO quantity."""
+    svc = _make_service(session)
+    svc._extract_all_documents = AsyncMock(
+        return_value=MultiDocumentExtraction(
+            po=DocumentExtraction(
+                quantity=100,
+                amount=100_000_000,
+                currency="IDR",
+            ),
+            gr=DocumentExtraction(quantity=95, amount=None, currency="IDR"),
+            invoice=DocumentExtraction(
+                quantity=100,
+                amount=111_000_000,
+                currency="IDR",
+                dpp_amount=100_000_000,
+                ppn_amount=11_000_000,
+            ),
+        )
+    )
+    svc.generate_risk_report = AsyncMock(
+        return_value=RiskReportResponse(
+            transaction_id="TXN-GR-FALLBACK",
+            severity="LOW",
+            findings=[],
+            overall_status="PASS",
+            recommendation="No issues found.",
+        )
+    )
+
+    await svc.get_risk_report_from_files(
+        tx_id="TXN-GR-FALLBACK",
+        po_file=_pdf_upload("po.pdf"),
+        gr_file=_pdf_upload("gr.pdf"),
+        invoice_file=_pdf_upload("invoice.pdf"),
+    )
+
+    kwargs = svc.generate_risk_report.await_args.kwargs
+    assert kwargs["gr_data"].amount == Decimal("95000000")
+
+
+@pytest.mark.asyncio
+async def test_gr_currency_fallback_from_po(session):
+    """Missing GR and invoice currencies inherit the PO currency."""
+    svc = _make_service(session)
+    svc._extract_all_documents = AsyncMock(
+        return_value=MultiDocumentExtraction(
+            po=DocumentExtraction(
+                quantity=100,
+                amount=100_000_000,
+                currency="IDR",
+            ),
+            gr=DocumentExtraction(quantity=95, amount=95_000_000, currency=""),
+            invoice=DocumentExtraction(
+                quantity=100,
+                amount=100_000_000,
+                currency="",
+            ),
+        )
+    )
+    svc.generate_risk_report = AsyncMock(
+        return_value=RiskReportResponse(
+            transaction_id="TXN-CURRENCY-FALLBACK",
+            severity="LOW",
+            findings=[],
+            overall_status="PASS",
+            recommendation="No issues found.",
+        )
+    )
+
+    await svc.get_risk_report_from_files(
+        tx_id="TXN-CURRENCY-FALLBACK",
+        po_file=_pdf_upload("po.pdf"),
+        gr_file=_pdf_upload("gr.pdf"),
+        invoice_file=_pdf_upload("invoice.pdf"),
+    )
+
+    kwargs = svc.generate_risk_report.await_args.kwargs
+    assert kwargs["gr_data"].currency == "IDR"
+    assert kwargs["invoice_data"].currency == "IDR"
 
 
 def _tax_invoice_doc(
@@ -473,6 +607,14 @@ async def test_get_risk_report_from_files_happy_path(session, monkeypatch):
     )
     svc = _make_service(session)
     call_log: list[dict] = []
+    original_generate_risk_report = svc.generate_risk_report
+    mapped_invoice_data: dict[str, DocumentData] = {}
+
+    async def capture_generate_risk_report(**kwargs):
+        mapped_invoice_data["invoice"] = kwargs["invoice_data"]
+        return await original_generate_risk_report(**kwargs)
+
+    svc.generate_risk_report = capture_generate_risk_report
 
     with patch(
         "httpx.AsyncClient.post",
@@ -491,6 +633,9 @@ async def test_get_risk_report_from_files_happy_path(session, monkeypatch):
     assert report.transaction_id == "TXN-PDF-HAPPY"
     assert report.overall_status == "PASS"
     assert report.findings == []
+    assert mapped_invoice_data["invoice"].tax_invoice_ref == "010.000-26.00000001"
+    findings = await svc._finding_repo.list_by_transaction("TXN-PDF-HAPPY")
+    assert findings == []
     assert len(call_log) == 5  # 4 uploads + 1 extraction call
     run_calls = [call for call in call_log if "/api/v1/run/" in call["url"]]
     assert len(run_calls) == 1
