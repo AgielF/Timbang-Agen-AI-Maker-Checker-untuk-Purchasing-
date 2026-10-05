@@ -9,7 +9,7 @@ import Icon from '../components/atoms/Icon';
 import { useRiskReport } from '../hooks/useApi';
 import { SAMPLE_TRANSACTION_ID, SAMPLE_DOCS } from '../lib/constants';
 
-const RECOMMENDED_ACTIONS = [
+const DEFAULT_RECOMMENDATIONS = [
   'Investigasi approval untuk selisih harga',
   'Konfirmasi ke vendor mengenai kuantitas',
   'Flag vendor untuk review berkala',
@@ -98,6 +98,42 @@ function StatusBadge({ status }) {
   return <Badge variant={variant}>{label}</Badge>;
 }
 
+function ExecutiveSummaryCard({ summary }) {
+  if (!summary?.trim()) return null;
+
+  return (
+    <section className="border-l-4 border-electric bg-surface/30 p-6">
+      <div className="mb-3 flex items-center gap-2 text-electric">
+        <Icon name="alert-triangle" size={18} />
+        <h3 className="text-xs font-semibold uppercase tracking-wider">
+          Ringkasan Eksekutif
+        </h3>
+      </div>
+      <p className="text-base leading-relaxed text-[var(--color-text-inv)]">{summary}</p>
+    </section>
+  );
+}
+
+function PatternAnalysisSection({ patterns = [] }) {
+  if (!patterns.length) return null;
+
+  return (
+    <section className="flex flex-col gap-3 border border-[var(--border-dark)] bg-surface p-6">
+      <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-inv-mute)]">
+        Pola Terdeteksi
+      </h3>
+      <ul className="flex flex-col gap-3">
+        {patterns.map((pattern, index) => (
+          <li key={`${pattern}-${index}`} className="flex items-start gap-3 text-sm leading-relaxed text-[var(--color-text-inv)]">
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-electric" aria-hidden="true" />
+            <span>{pattern}</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export default function RiskReportPage() {
   const [searchParams] = useSearchParams();
   const location = useLocation();
@@ -125,6 +161,11 @@ export default function RiskReportPage() {
   const findings   = (report?.findings ?? []).map(mapFinding);
   const breakdown  = deriveBreakdown(report?.findings);
   const reportTime = report?.findings?.[0]?.created_at ?? '';
+  const narrativeRecommendations = report?.narrative?.dynamic_recommendations;
+  const recommendedActions = Array.isArray(narrativeRecommendations)
+    && narrativeRecommendations.some((action) => action?.trim())
+    ? narrativeRecommendations.filter((action) => action?.trim())
+    : DEFAULT_RECOMMENDATIONS;
 
   return (
     <WorkbenchTemplate
@@ -177,7 +218,11 @@ export default function RiskReportPage() {
               </div>
             )}
 
-            {/* Row 3: Findings */}
+            <ExecutiveSummaryCard summary={report.narrative?.executive_summary} />
+
+            <PatternAnalysisSection patterns={report.narrative?.pattern_analysis} />
+
+            {/* Findings */}
             <section className="flex flex-col gap-3">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-inv-mute)]">
                 Temuan
@@ -185,14 +230,14 @@ export default function RiskReportPage() {
               <FindingList items={findings} />
             </section>
 
-            {/* Row 4: Recommended Actions */}
+            {/* Recommended Actions */}
             <section className="flex flex-col gap-3 border border-[var(--border-dark)] bg-surface p-6">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-[var(--color-text-inv-mute)]">
                 Recommended Actions
               </h3>
               <ul className="flex flex-col gap-2">
-                {RECOMMENDED_ACTIONS.map((action) => (
-                  <li key={action} className="flex items-start gap-2 text-sm text-[var(--color-text-inv)]">
+                {recommendedActions.map((action, index) => (
+                  <li key={`${action}-${index}`} className="flex items-start gap-2 text-sm text-[var(--color-text-inv)]">
                     <span className="text-electric mt-0.5 shrink-0">→</span>
                     {action}
                   </li>
