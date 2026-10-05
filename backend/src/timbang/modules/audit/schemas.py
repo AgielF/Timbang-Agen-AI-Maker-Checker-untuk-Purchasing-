@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # ── AuditFinding ─────────────────────────────────────────────────────────────
 
@@ -147,6 +147,21 @@ class MultiDocumentExtraction(BaseModel):
     raw_text: str | None = None
 
 
+class RiskNarrative(BaseModel):
+    executive_summary: str = ""
+    pattern_analysis: list[str] = Field(default_factory=list)
+    dynamic_recommendations: list[str] = Field(default_factory=list)
+
+    @field_validator("pattern_analysis", "dynamic_recommendations", mode="before")
+    @classmethod
+    def _ensure_list(cls, value: object) -> object:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return value
+
+
 # ── Risk Report ───────────────────────────────────────────────────────────────
 
 
@@ -158,3 +173,4 @@ class RiskReportResponse(BaseModel):
     findings: list[AuditFindingRead]
     overall_status: str  # PASS | WARN | FAIL
     recommendation: str
+    narrative: RiskNarrative | None = None

@@ -458,6 +458,83 @@ async def test_generate_risk_report_persists_findings(session):
 
 
 @pytest.mark.asyncio
+async def test_generate_risk_report_with_narrative(session, monkeypatch):
+    settings = __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings()
+    monkeypatch.setattr(settings, "langflow_narrator_flow_id", "risk-narrator-test")
+    svc = _make_service(session)
+    narrative_payload = {
+        "executive_summary": "GR received 5% fewer units than the purchase order.",
+        "pattern_analysis": ["Quantity shortfall requires vendor follow-up."],
+        "dynamic_recommendations": ["Reconcile the 5 missing units with the vendor."],
+    }
+    langflow_response = {
+        "outputs": [
+            {
+                "outputs": [
+                    {"results": {"message": {"text": json.dumps(narrative_payload)}}}
+                ]
+            }
+        ]
+    }
+    request_log: list[dict] = []
+
+    async def mock_post(url, **kwargs):
+        request_log.append({"url": url, **kwargs})
+        return httpx.Response(
+            200,
+            json=langflow_response,
+            request=httpx.Request("POST", url),
+        )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=mock_post):
+        report = await svc.generate_risk_report(
+            transaction_id="TXN-NARRATIVE-001",
+            po_data=_doc("100", "1000000", ref="PO-NARRATIVE-001").model_copy(
+                update={"npwp_vendor": "123456789012345"}
+            ),
+            gr_data=_doc("95", "950000"),
+            invoice_data=_doc("100", "1000000").model_copy(
+                update={"npwp_vendor": "123456789012345"}
+            ),
+            has_level2_approval=True,
+        )
+
+    assert len(request_log) == 1
+    assert request_log[0]["url"].endswith("/api/v1/run/risk-narrator-test")
+    assert "Transaction: TXN-NARRATIVE-001" in request_log[0]["json"]["input_value"]
+    assert f"Total Findings: {len(report.findings)}" in request_log[0]["json"]["input_value"]
+    assert report.narrative is not None
+    assert report.narrative.executive_summary == narrative_payload["executive_summary"]
+    assert report.narrative.pattern_analysis == narrative_payload["pattern_analysis"]
+    assert report.narrative.dynamic_recommendations == narrative_payload[
+        "dynamic_recommendations"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_generate_risk_report_without_narrator_flow_id(session, monkeypatch):
+    settings = __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings()
+    monkeypatch.setattr(settings, "langflow_narrator_flow_id", "")
+    svc = _make_service(session)
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        report = await svc.generate_risk_report(
+            transaction_id="TXN-NO-NARRATOR",
+            po_data=_doc("100", "1000000", ref="PO-NO-NARRATOR").model_copy(
+                update={"npwp_vendor": "123456789012345"}
+            ),
+            gr_data=_doc("100", "1000000"),
+            invoice_data=_doc("100", "1000000").model_copy(
+                update={"npwp_vendor": "123456789012345"}
+            ),
+            has_level2_approval=True,
+        )
+
+    mock_post.assert_not_awaited()
+    assert report.narrative is None
+
+
+@pytest.mark.asyncio
 async def test_generate_risk_report_labels_missing_level2_approval(session):
     """A high-value transaction without L2 approval gets an approval label."""
     svc = _make_service(session)

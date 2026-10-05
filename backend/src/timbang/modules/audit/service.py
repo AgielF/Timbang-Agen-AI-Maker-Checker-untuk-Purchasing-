@@ -28,6 +28,7 @@ from timbang.modules.audit.schemas import (
     FraudIndication,
     MatchResult,
     MultiDocumentExtraction,
+    RiskNarrative,
     RiskReportResponse,
     SopValidationResult,
     TaxInvoiceValidationResult,
@@ -181,6 +182,78 @@ class AuditService:
         """Return a list of audit findings."""
         findings = await self._finding_repo.list(limit=limit)
         return [AuditFindingRead.model_validate(f) for f in findings]
+
+    async def _enrich_with_narrative(
+        self,
+        findings: list[AuditFindingRead],
+        transaction_id: str,
+        has_level2_approval: bool,
+    ) -> RiskNarrative:
+        """Ask the optional risk narrator for a second opinion on deterministic findings."""
+        settings = get_settings()
+        flow_id = settings.langflow_narrator_flow_id
+        if not flow_id:
+            return RiskNarrative()
+
+        findings_text = "\n".join(
+            f"- [{finding.indication_label}] {finding.severity}: {finding.description}"
+            for finding in findings
+        )
+        context = (
+            f"Transaction: {transaction_id}\n"
+            f"Has Level 2 Approval: {has_level2_approval}\n"
+            f"Total Findings: {len(findings)}\n\n"
+            f"Findings:\n{findings_text}"
+        )
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if settings.langflow_api_key:
+            headers["x-api-key"] = settings.langflow_api_key
+
+        try:
+            async with httpx.AsyncClient(timeout=settings.langflow_timeout_seconds) as client:
+                response = await client.post(
+                    f"{settings.langflow_base_url}/api/v1/run/{flow_id}",
+                    headers=headers,
+                    json={
+                        "input_value": context,
+                        "input_type": "chat",
+                        "output_type": "chat",
+                    },
+                )
+            if response.status_code != 200:
+                raise UpstreamError(
+                    f"Langflow narrator returned HTTP {response.status_code}: "
+                    f"{response.text[:300]}"
+                )
+            try:
+                response_data = response.json()
+            except json.JSONDecodeError as exc:
+                raise UpstreamError(f"Langflow narrator response is not valid JSON: {exc}") from exc
+
+            text = _extract_langflow_text(response_data)
+            parsed: object = None
+            candidates = [text.strip()]
+            markdown_match = _MARKDOWN_FENCE_RE.search(text)
+            if markdown_match:
+                candidates.insert(0, markdown_match.group(1).strip())
+            for candidate in candidates:
+                try:
+                    parsed = json.loads(candidate)
+                    break
+                except (json.JSONDecodeError, ValueError):
+                    continue
+
+            if isinstance(parsed, dict):
+                return RiskNarrative.model_validate(parsed)
+            raise ValueError("Risk narrator output did not contain a JSON object.")
+        except Exception as exc:  # narrator is optional; deterministic report must remain available
+            log.warning(
+                "risk_narrative_enrichment_failed",
+                transaction_id=transaction_id,
+                flow_id=flow_id,
+                error=str(exc),
+            )
+            return RiskNarrative()
 
     def _get_file_node_keys(self) -> dict[str, str]:
         """Return configured Langflow File node IDs or the standard node IDs."""
@@ -734,10 +807,17 @@ class AuditService:
             finding_count=len(findings),
         )
 
-        return RiskReportResponse(
+        response = RiskReportResponse(
             transaction_id=transaction_id,
             severity=severity,
             findings=findings,
             overall_status=overall_status,
             recommendation="; ".join(recommendations) if recommendations else "No issues found.",
         )
+        if get_settings().langflow_narrator_flow_id:
+            response.narrative = await self._enrich_with_narrative(
+                findings=findings,
+                transaction_id=transaction_id,
+                has_level2_approval=has_level2_approval,
+            )
+        return response

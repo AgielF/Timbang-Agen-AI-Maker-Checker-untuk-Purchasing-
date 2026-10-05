@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     langflow_api_key: str = ""  # set via env LANGFLOW_API_KEY — NEVER hardcode
     langflow_maker_flow_id: str = ""
     langflow_checker_flow_id: str = ""
+    langflow_narrator_flow_id: str = ""
     langflow_file_node_ids: str = ""
     langflow_timeout_seconds: float = 120.0
 

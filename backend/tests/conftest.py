@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from timbang.main import create_app
 from timbang.modules.procurement.models import PriceQuote, Vendor
+from timbang.shared.core.config import get_settings
 from timbang.shared.db.base import Base
 from timbang.shared.db.session import get_session
 
 # In-memory SQLite for tests (no real DB required)
 _TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+
+@pytest.fixture(autouse=True)
+def disable_external_narrator_flow(monkeypatch):
+    """Keep the suite offline unless a test explicitly mocks/enables the narrator."""
+    monkeypatch.setattr(get_settings(), "langflow_narrator_flow_id", "")
 
 
 @pytest_asyncio.fixture
