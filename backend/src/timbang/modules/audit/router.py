@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,11 @@ from timbang.shared.core.middleware import limiter
 from timbang.shared.db.session import get_session
 
 router = APIRouter(tags=["audit"])
+
+
+def _map_exception(exc: DomainError) -> HTTPException:
+    """Map an audit domain error to the existing client-error response shape."""
+    return HTTPException(status_code=400, detail=str(exc))
 
 
 def _build_service(session: AsyncSession = Depends(get_session)) -> AuditService:
@@ -106,4 +111,35 @@ async def generate_risk_report(
             has_complete_docs=body.has_complete_docs,
         )
     except DomainError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise _map_exception(exc) from exc
+
+
+@router.post(
+    "/transactions/{tx_id}/risk-report-with-files",
+    response_model=RiskReportResponse,
+)
+@limiter.limit("5/minute")
+async def risk_report_with_files(
+    request: Request,
+    tx_id: str,
+    po_file: UploadFile = File(...),
+    gr_file: UploadFile = File(...),
+    invoice_file: UploadFile = File(...),
+    tax_invoice_file: UploadFile | None = File(None),
+    has_level2_approval: bool = Form(False),
+    has_complete_docs: bool = Form(True),
+    service: AuditService = Depends(_build_service),
+) -> RiskReportResponse:
+    """Extract uploaded procurement PDFs and generate their Checker report."""
+    try:
+        return await service.get_risk_report_from_files(
+            tx_id=tx_id,
+            po_file=po_file,
+            gr_file=gr_file,
+            invoice_file=invoice_file,
+            tax_invoice_file=tax_invoice_file,
+            has_level2_approval=has_level2_approval,
+            has_complete_docs=has_complete_docs,
+        )
+    except DomainError as exc:
+        raise _map_exception(exc) from exc

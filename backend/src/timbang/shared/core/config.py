@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     langflow_base_url: str = "http://127.0.0.1:7860"
     langflow_api_key: str = ""  # set via env LANGFLOW_API_KEY — NEVER hardcode
     langflow_maker_flow_id: str = ""
+    langflow_checker_flow_id: str = ""
     langflow_timeout_seconds: float = 120.0
 
     @field_validator("cors_origins", mode="before")

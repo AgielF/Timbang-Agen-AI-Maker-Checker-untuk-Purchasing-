@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import io
+import json
 from decimal import Decimal
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
+from fastapi import UploadFile
 
 from timbang.modules.audit.repository import AuditFindingRepository, CheckResultRepository
 from timbang.modules.audit.schemas import DocumentData, FraudIndication
@@ -13,6 +18,7 @@ from timbang.modules.audit.service import (
     _citation_guard,
     _indication_for_discrepancy,
 )
+from timbang.shared.core.exceptions import ValidationError
 
 
 def _make_service(session) -> AuditService:
@@ -24,6 +30,89 @@ def _make_service(session) -> AuditService:
 
 def _doc(qty: str, amount: str, ref: str = "REF-001") -> DocumentData:
     return DocumentData(quantity=Decimal(qty), amount=Decimal(amount), reference=ref)
+
+
+def _pdf_upload(filename: str, content: bytes = b"%PDF-1.7 mock PDF") -> UploadFile:
+    return UploadFile(
+        filename=filename,
+        file=io.BytesIO(content),
+        size=len(content),
+        headers={"content-type": "application/pdf"},
+    )
+
+
+def _langflow_text(document_type: str, *, include_tax: bool = True) -> str:
+    documents = {
+        "PO": {
+            "document_type": "PO",
+            "reference": "PO-PDF-001",
+            "quantity": 10,
+            "amount": 100000,
+            "currency": "IDR",
+            "npwp_vendor": "123456789012345",
+        },
+        "GR": {
+            "document_type": "GR",
+            "reference": "GR-PDF-001",
+            "quantity": 10,
+            "amount": 100000,
+            "currency": "IDR",
+        },
+        "INVOICE": {
+            "document_type": "INVOICE",
+            "reference": "INV-PDF-001",
+            "quantity": 10,
+            "amount": 111000 if include_tax else 100000,
+            "currency": "IDR",
+        },
+        "TAX_INVOICE": {
+            "document_type": "TAX_INVOICE",
+            "tax_invoice_ref": "010.000-26.00000001",
+            "dpp_amount": 100000,
+            "ppn_amount": 11000,
+            "npwp_vendor": "123456789012345",
+        },
+    }
+    return json.dumps(documents[document_type])
+
+
+def _mock_langflow_post(call_log: list[dict], *, include_tax: bool = True):
+    async def mock_post(url, **kwargs):
+        call_log.append({"url": url, **kwargs})
+        if "/files/upload/" in url:
+            filename = kwargs["files"]["file"][0]
+            return httpx.Response(
+                201,
+                json={"file_path": f"checker-flow/{filename}"},
+                request=httpx.Request("POST", url),
+            )
+
+        document_type = kwargs["json"]["input_value"].rsplit(" ", maxsplit=1)[-1]
+        payload = {
+            "outputs": [
+                {
+                    "outputs": [
+                        {
+                            "results": {
+                                "message": {
+                                    "text": _langflow_text(
+                                        document_type,
+                                        include_tax=include_tax,
+                                    )
+                                }
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        return httpx.Response(
+            200,
+            json=payload,
+            request=httpx.Request("POST", url),
+        )
+
+    return mock_post
 
 
 def _tax_invoice_doc(
@@ -368,3 +457,96 @@ async def test_generate_risk_report_clean_transaction(session):
     assert report.overall_status == "PASS"
     assert report.findings == []
     assert "No issues" in report.recommendation
+
+
+@pytest.mark.asyncio
+async def test_get_risk_report_from_files_happy_path(session, monkeypatch):
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_checker_flow_id",
+        "checker-flow-id",
+    )
+    svc = _make_service(session)
+    call_log: list[dict] = []
+
+    with patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+        side_effect=_mock_langflow_post(call_log),
+    ):
+        report = await svc.get_risk_report_from_files(
+            tx_id="TXN-PDF-HAPPY",
+            po_file=_pdf_upload("po.pdf"),
+            gr_file=_pdf_upload("gr.pdf"),
+            invoice_file=_pdf_upload("invoice.pdf"),
+            tax_invoice_file=_pdf_upload("tax-invoice.pdf"),
+            has_level2_approval=True,
+        )
+
+    assert report.transaction_id == "TXN-PDF-HAPPY"
+    assert report.overall_status == "PASS"
+    assert report.findings == []
+    assert len(call_log) == 8
+    run_calls = [call for call in call_log if "/api/v1/run/" in call["url"]]
+    assert [call["json"]["input_value"] for call in run_calls] == [
+        "Ekstrak dokumen type: PO",
+        "Ekstrak dokumen type: GR",
+        "Ekstrak dokumen type: INVOICE",
+        "Ekstrak dokumen type: TAX_INVOICE",
+    ]
+    assert run_calls[-1]["json"]["tweaks"]["File-xxx"]["file_path"] == (
+        "checker-flow/tax-invoice.pdf"
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_risk_report_from_files_without_tax_invoice(session, monkeypatch):
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_checker_flow_id",
+        "checker-flow-id",
+    )
+    svc = _make_service(session)
+    call_log: list[dict] = []
+
+    with patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+        side_effect=_mock_langflow_post(call_log, include_tax=False),
+    ):
+        report = await svc.get_risk_report_from_files(
+            tx_id="TXN-PDF-NO-TAX",
+            po_file=_pdf_upload("po.pdf"),
+            gr_file=_pdf_upload("gr.pdf"),
+            invoice_file=_pdf_upload("invoice.pdf"),
+            has_level2_approval=True,
+        )
+
+    assert report.transaction_id == "TXN-PDF-NO-TAX"
+    assert report.overall_status == "PASS"
+    assert report.findings == []
+    assert len(call_log) == 6
+    assert not any(
+        "TAX_INVOICE" in call.get("json", {}).get("input_value", "") for call in call_log
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_risk_report_from_files_handles_invalid_pdf(session, monkeypatch):
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_checker_flow_id",
+        "checker-flow-id",
+    )
+    svc = _make_service(session)
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        with pytest.raises(ValidationError, match="bukan PDF yang valid"):
+            await svc.get_risk_report_from_files(
+                tx_id="TXN-PDF-INVALID",
+                po_file=_pdf_upload("po.pdf", b"this is not a PDF"),
+                gr_file=_pdf_upload("gr.pdf"),
+                invoice_file=_pdf_upload("invoice.pdf"),
+            )
+
+    mock_post.assert_not_awaited()

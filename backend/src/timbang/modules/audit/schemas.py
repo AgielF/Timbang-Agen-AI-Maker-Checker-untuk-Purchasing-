@@ -109,6 +109,21 @@ class TaxInvoiceValidationResult(BaseModel):
     violations: list[str]
 
 
+class DocumentExtraction(BaseModel):
+    """Output from the document-extractor flow for one uploaded file."""
+
+    document_type: str = ""
+    reference: str = ""
+    quantity: float | None = None
+    amount: float | None = None
+    currency: str = "IDR"
+    tax_invoice_ref: str = ""
+    dpp_amount: float | None = None
+    ppn_amount: float | None = None
+    npwp_vendor: str = ""
+    raw_text: str | None = None
+
+
 # ── Risk Report ───────────────────────────────────────────────────────────────
 
 
