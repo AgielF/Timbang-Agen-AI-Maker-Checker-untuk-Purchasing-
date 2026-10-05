@@ -27,6 +27,7 @@ from timbang.modules.audit.schemas import (
     DocumentExtraction,
     FraudIndication,
     MatchResult,
+    MultiDocumentExtraction,
     RiskReportResponse,
     SopValidationResult,
     TaxInvoiceValidationResult,
@@ -39,7 +40,6 @@ log = structlog.get_logger(__name__)
 # SOP thresholds
 _SOP_L2_APPROVAL_THRESHOLD = Decimal("100_000_000")  # 100 juta IDR → level 2 approval required
 _MAX_PDF_SIZE_MB = 10
-_LANGFLOW_FILE_TWEAK_KEY = "File-xxx"
 _MARKDOWN_FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)\s*```", re.DOTALL)
 
 
@@ -71,8 +71,8 @@ def _extract_langflow_text(data: dict) -> str:
     return search(data) or json.dumps(data, ensure_ascii=False)
 
 
-def _parse_document_extraction(text: str, document_type: str) -> DocumentExtraction:
-    """Parse JSON or return unstructured model output in the raw_text field."""
+def _parse_multi_document_extraction(text: str) -> MultiDocumentExtraction:
+    """Parse the combined output or retain unstructured output for diagnosis."""
     parsed: object = None
     candidates = [text.strip()]
     markdown_match = _MARKDOWN_FENCE_RE.search(text)
@@ -86,18 +86,16 @@ def _parse_document_extraction(text: str, document_type: str) -> DocumentExtract
             continue
 
     if isinstance(parsed, dict):
-        parsed.setdefault("document_type", document_type)
         try:
-            return DocumentExtraction.model_validate(parsed)
+            return MultiDocumentExtraction.model_validate(parsed)
         except PydanticValidationError:
             pass
 
     log.warning(
-        "checker_document_parse_failed",
-        document_type=document_type,
+        "checker_multi_document_parse_failed",
         raw_preview=text[:300],
     )
-    return DocumentExtraction(document_type=document_type, raw_text=text)
+    return MultiDocumentExtraction(raw_text=text)
 
 
 def _is_valid_tax_invoice_ref(ref: str) -> bool:
@@ -184,12 +182,43 @@ class AuditService:
         findings = await self._finding_repo.list(limit=limit)
         return [AuditFindingRead.model_validate(f) for f in findings]
 
-    async def _extract_document_from_pdf(
+    def _get_file_node_keys(self) -> dict[str, str]:
+        """Return configured Langflow File node IDs or the standard node IDs."""
+        settings = get_settings()
+        raw = getattr(settings, "langflow_file_node_ids", "")
+        if not raw:
+            return {
+                "po": "File-po",
+                "gr": "File-gr",
+                "invoice": "File-invoice",
+                "tax_invoice": "File-tax-invoice",
+            }
+        try:
+            node_keys = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise UpstreamError(
+                "LANGFLOW_FILE_NODE_IDS harus berisi JSON object yang valid."
+            ) from exc
+        if not isinstance(node_keys, dict) or any(
+            key not in ("po", "gr", "invoice", "tax_invoice")
+            or not isinstance(value, str)
+            or not value
+            for key, value in node_keys.items()
+        ):
+            raise UpstreamError(
+                "LANGFLOW_FILE_NODE_IDS harus berupa JSON object dengan nama dokumen "
+                "dan node ID berupa string."
+            )
+        return node_keys
+
+    async def _extract_all_documents(
         self,
-        file: UploadFile,
-        document_type: str,
-    ) -> DocumentExtraction:
-        """Upload one PDF to the Checker Langflow flow and parse its extraction."""
+        po_file: UploadFile,
+        gr_file: UploadFile,
+        invoice_file: UploadFile,
+        tax_invoice_file: UploadFile | None,
+    ) -> MultiDocumentExtraction:
+        """Upload supplied PDFs, run the Checker flow once, and parse all extractions."""
         settings = get_settings()
         flow_id = settings.langflow_checker_flow_id
         if not flow_id:
@@ -198,17 +227,41 @@ class AuditService:
                 "Set env var LANGFLOW_CHECKER_FLOW_ID sebelum menggunakan endpoint ini."
             )
 
-        filename = file.filename or ""
-        extension = os.path.splitext(filename)[1].lower()
-        if extension != ".pdf":
-            raise ValidationError("Format file tidak didukung. Unggah dokumen PDF.")
-
-        content = await file.read()
         max_bytes = _MAX_PDF_SIZE_MB * 1024 * 1024
-        if len(content) > max_bytes:
-            raise ValidationError(f"File terlalu besar. Maks {_MAX_PDF_SIZE_MB} MB.")
-        if b"%PDF-" not in content[:1024]:
-            raise ValidationError(f"File '{filename}' bukan PDF yang valid.")
+        named_files = [
+            ("po", po_file),
+            ("gr", gr_file),
+            ("invoice", invoice_file),
+        ]
+        if tax_invoice_file is not None:
+            named_files.append(("tax_invoice", tax_invoice_file))
+
+        file_contents: list[tuple[str, UploadFile, str, bytes]] = []
+        for document_key, file in named_files:
+            filename = file.filename or ""
+            extension = os.path.splitext(filename)[1].lower()
+            if extension != ".pdf":
+                raise ValidationError(
+                    f"Format file tidak didukung untuk {document_key}. Unggah dokumen PDF."
+                )
+
+            content = await file.read()
+            if len(content) > max_bytes:
+                raise ValidationError(f"File {filename} terlalu besar. Maks {_MAX_PDF_SIZE_MB} MB.")
+            if b"%PDF-" not in content[:1024]:
+                raise ValidationError(f"File '{filename}' bukan PDF yang valid.")
+            file_contents.append((document_key, file, filename, content))
+
+        file_node_keys = self._get_file_node_keys()
+        missing_node_keys = [
+            document_key
+            for document_key, _file, _filename, _content in file_contents
+            if not file_node_keys.get(document_key)
+        ]
+        if missing_node_keys:
+            raise UpstreamError(
+                "LANGFLOW_FILE_NODE_IDS belum memiliki node untuk: " + ", ".join(missing_node_keys)
+            )
 
         headers: dict[str, str] = {}
         if settings.langflow_api_key:
@@ -217,45 +270,49 @@ class AuditService:
         try:
             async with httpx.AsyncClient(timeout=settings.langflow_timeout_seconds) as client:
                 upload_url = f"{settings.langflow_base_url}/api/v1/files/upload/{flow_id}"
-                upload_response = await client.post(
-                    upload_url,
-                    headers=headers,
-                    files={
-                        "file": (
-                            filename,
-                            content,
-                            file.content_type or "application/pdf",
-                        )
-                    },
-                )
-                if upload_response.status_code not in (200, 201):
-                    raise UpstreamError(
-                        f"Langflow file upload failed HTTP {upload_response.status_code}: "
-                        f"{upload_response.text[:300]}"
+                uploaded_paths: dict[str, str] = {}
+                for document_key, file, filename, content in file_contents:
+                    upload_response = await client.post(
+                        upload_url,
+                        headers=headers,
+                        files={
+                            "file": (
+                                filename,
+                                content,
+                                file.content_type or "application/pdf",
+                            )
+                        },
                     )
-                try:
-                    upload_data = upload_response.json()
-                    file_path = upload_data["file_path"]
-                except (json.JSONDecodeError, KeyError, TypeError) as exc:
-                    raise UpstreamError(
-                        "Langflow upload response tidak memiliki file_path."
-                    ) from exc
+                    if upload_response.status_code not in (200, 201):
+                        raise UpstreamError(
+                            f"Langflow file upload failed HTTP {upload_response.status_code}: "
+                            f"{upload_response.text[:300]}"
+                        )
+                    try:
+                        upload_data = upload_response.json()
+                        file_path = upload_data["file_path"]
+                    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+                        raise UpstreamError(
+                            "Langflow upload response tidak memiliki file_path."
+                        ) from exc
+                    if not isinstance(file_path, str) or not file_path:
+                        raise UpstreamError("Langflow upload response tidak memiliki file_path.")
+                    uploaded_paths[document_key] = file_path
 
-                if not isinstance(file_path, str) or not file_path:
-                    raise UpstreamError("Langflow upload response tidak memiliki file_path.")
-
+                tweaks = {
+                    file_node_keys[document_key]: {"file_path": file_path}
+                    for document_key, file_path in uploaded_paths.items()
+                }
                 run_url = f"{settings.langflow_base_url}/api/v1/run/{flow_id}"
                 started_at = time.monotonic()
                 run_response = await client.post(
                     run_url,
                     headers={**headers, "Content-Type": "application/json"},
                     json={
-                        "input_value": f"Ekstrak dokumen type: {document_type}",
+                        "input_value": "Ekstrak semua dokumen pengadaan",
                         "input_type": "chat",
                         "output_type": "chat",
-                        "tweaks": {
-                            _LANGFLOW_FILE_TWEAK_KEY: {"file_path": file_path},
-                        },
+                        "tweaks": tweaks,
                     },
                 )
         except httpx.TimeoutException as exc:
@@ -265,9 +322,9 @@ class AuditService:
 
         elapsed_ms = int((time.monotonic() - started_at) * 1000)
         log.info(
-            "langflow_checker_document_extracted",
+            "langflow_checker_documents_extracted",
             flow_id=flow_id,
-            document_type=document_type,
+            document_count=len(file_contents),
             status_code=run_response.status_code,
             elapsed_ms=elapsed_ms,
         )
@@ -281,7 +338,7 @@ class AuditService:
             raise UpstreamError(f"Langflow response is not valid JSON: {exc}") from exc
 
         text = _extract_langflow_text(response_data)
-        return _parse_document_extraction(text, document_type)
+        return _parse_multi_document_extraction(text)
 
     async def get_risk_report_from_files(
         self,
@@ -293,19 +350,21 @@ class AuditService:
         has_level2_approval: bool = False,
         has_complete_docs: bool = True,
     ) -> RiskReportResponse:
-        """Extract three or four PDF documents, then generate the risk report."""
-        po_extraction = await self._extract_document_from_pdf(po_file, "PO")
-        gr_extraction = await self._extract_document_from_pdf(gr_file, "GR")
-        invoice_extraction = await self._extract_document_from_pdf(invoice_file, "INVOICE")
-        tax_invoice_extraction = None
-        if tax_invoice_file is not None:
-            tax_invoice_extraction = await self._extract_document_from_pdf(
-                tax_invoice_file,
-                "TAX_INVOICE",
-            )
+        """Extract three or four PDFs in one flow call and generate a risk report."""
+        extraction = await self._extract_all_documents(
+            po_file=po_file,
+            gr_file=gr_file,
+            invoice_file=invoice_file,
+            tax_invoice_file=tax_invoice_file,
+        )
 
         def to_decimal(value: float | None) -> Decimal | None:
             return Decimal(str(value)) if value is not None else None
+
+        po_extraction = extraction.po or DocumentExtraction(document_type="PO")
+        gr_extraction = extraction.gr or DocumentExtraction(document_type="GR")
+        invoice_extraction = extraction.invoice or DocumentExtraction(document_type="INVOICE")
+        tax_invoice_extraction = extraction.tax_invoice
 
         po_data = DocumentData(
             quantity=to_decimal(po_extraction.quantity) or Decimal("0"),

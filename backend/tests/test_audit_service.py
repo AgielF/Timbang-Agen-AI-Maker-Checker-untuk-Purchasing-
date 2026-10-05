@@ -41,9 +41,9 @@ def _pdf_upload(filename: str, content: bytes = b"%PDF-1.7 mock PDF") -> UploadF
     )
 
 
-def _langflow_text(document_type: str, *, include_tax: bool = True) -> str:
+def _multi_document_text(*, include_tax: bool = True) -> str:
     documents = {
-        "PO": {
+        "po": {
             "document_type": "PO",
             "reference": "PO-PDF-001",
             "quantity": 10,
@@ -51,32 +51,38 @@ def _langflow_text(document_type: str, *, include_tax: bool = True) -> str:
             "currency": "IDR",
             "npwp_vendor": "123456789012345",
         },
-        "GR": {
+        "gr": {
             "document_type": "GR",
             "reference": "GR-PDF-001",
             "quantity": 10,
             "amount": 100000,
             "currency": "IDR",
         },
-        "INVOICE": {
+        "invoice": {
             "document_type": "INVOICE",
             "reference": "INV-PDF-001",
             "quantity": 10,
             "amount": 111000 if include_tax else 100000,
             "currency": "IDR",
         },
-        "TAX_INVOICE": {
+    }
+    if include_tax:
+        documents["tax_invoice"] = {
             "document_type": "TAX_INVOICE",
             "tax_invoice_ref": "010.000-26.00000001",
             "dpp_amount": 100000,
             "ppn_amount": 11000,
             "npwp_vendor": "123456789012345",
-        },
-    }
-    return json.dumps(documents[document_type])
+        }
+    return json.dumps(documents)
 
 
-def _mock_langflow_post(call_log: list[dict], *, include_tax: bool = True):
+def _mock_langflow_post(
+    call_log: list[dict],
+    *,
+    include_tax: bool = True,
+    malformed_output: bool = False,
+):
     async def mock_post(url, **kwargs):
         call_log.append({"url": url, **kwargs})
         if "/files/upload/" in url:
@@ -87,7 +93,9 @@ def _mock_langflow_post(call_log: list[dict], *, include_tax: bool = True):
                 request=httpx.Request("POST", url),
             )
 
-        document_type = kwargs["json"]["input_value"].rsplit(" ", maxsplit=1)[-1]
+        text = "not valid structured extraction" if malformed_output else _multi_document_text(
+            include_tax=include_tax
+        )
         payload = {
             "outputs": [
                 {
@@ -95,10 +103,7 @@ def _mock_langflow_post(call_log: list[dict], *, include_tax: bool = True):
                         {
                             "results": {
                                 "message": {
-                                    "text": _langflow_text(
-                                        document_type,
-                                        include_tax=include_tax,
-                                    )
+                                    "text": text
                                 }
                             }
                         }
@@ -486,17 +491,16 @@ async def test_get_risk_report_from_files_happy_path(session, monkeypatch):
     assert report.transaction_id == "TXN-PDF-HAPPY"
     assert report.overall_status == "PASS"
     assert report.findings == []
-    assert len(call_log) == 8
+    assert len(call_log) == 5  # 4 uploads + 1 extraction call
     run_calls = [call for call in call_log if "/api/v1/run/" in call["url"]]
-    assert [call["json"]["input_value"] for call in run_calls] == [
-        "Ekstrak dokumen type: PO",
-        "Ekstrak dokumen type: GR",
-        "Ekstrak dokumen type: INVOICE",
-        "Ekstrak dokumen type: TAX_INVOICE",
-    ]
-    assert run_calls[-1]["json"]["tweaks"]["File-xxx"]["file_path"] == (
-        "checker-flow/tax-invoice.pdf"
-    )
+    assert len(run_calls) == 1
+    assert run_calls[0]["json"]["input_value"] == "Ekstrak semua dokumen pengadaan"
+    assert run_calls[0]["json"]["tweaks"] == {
+        "File-po": {"file_path": "checker-flow/po.pdf"},
+        "File-gr": {"file_path": "checker-flow/gr.pdf"},
+        "File-invoice": {"file_path": "checker-flow/invoice.pdf"},
+        "File-tax-invoice": {"file_path": "checker-flow/tax-invoice.pdf"},
+    }
 
 
 @pytest.mark.asyncio
@@ -525,10 +529,14 @@ async def test_get_risk_report_from_files_without_tax_invoice(session, monkeypat
     assert report.transaction_id == "TXN-PDF-NO-TAX"
     assert report.overall_status == "PASS"
     assert report.findings == []
-    assert len(call_log) == 6
-    assert not any(
-        "TAX_INVOICE" in call.get("json", {}).get("input_value", "") for call in call_log
-    )
+    assert len(call_log) == 4  # 3 uploads + 1 extraction call
+    run_calls = [call for call in call_log if "/api/v1/run/" in call["url"]]
+    assert len(run_calls) == 1
+    assert set(run_calls[0]["json"]["tweaks"]) == {
+        "File-po",
+        "File-gr",
+        "File-invoice",
+    }
 
 
 @pytest.mark.asyncio
@@ -550,3 +558,57 @@ async def test_get_risk_report_from_files_handles_invalid_pdf(session, monkeypat
             )
 
     mock_post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_risk_report_from_files_rejects_invalid_extension(session, monkeypatch):
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_checker_flow_id",
+        "checker-flow-id",
+    )
+    svc = _make_service(session)
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        with pytest.raises(ValidationError, match="Format file tidak didukung"):
+            await svc.get_risk_report_from_files(
+                tx_id="TXN-PDF-EXTENSION",
+                po_file=_pdf_upload("po.txt", b"%PDF-1.7 valid signature"),
+                gr_file=_pdf_upload("gr.pdf"),
+                invoice_file=_pdf_upload("invoice.pdf"),
+            )
+
+    mock_post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_extract_all_documents_malformed_output_falls_back_to_raw_text(
+    session,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        __import__("timbang.shared.core.config", fromlist=["get_settings"]).get_settings(),
+        "langflow_checker_flow_id",
+        "checker-flow-id",
+    )
+    svc = _make_service(session)
+    call_log: list[dict] = []
+
+    with patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+        side_effect=_mock_langflow_post(call_log, malformed_output=True),
+    ):
+        extraction = await svc._extract_all_documents(
+            po_file=_pdf_upload("po.pdf"),
+            gr_file=_pdf_upload("gr.pdf"),
+            invoice_file=_pdf_upload("invoice.pdf"),
+            tax_invoice_file=_pdf_upload("tax-invoice.pdf"),
+        )
+
+    assert extraction.po is None
+    assert extraction.gr is None
+    assert extraction.invoice is None
+    assert extraction.tax_invoice is None
+    assert extraction.raw_text == "not valid structured extraction"
+    assert len([call for call in call_log if "/api/v1/run/" in call["url"]]) == 1

@@ -124,6 +124,16 @@ class DocumentExtraction(BaseModel):
     raw_text: str | None = None
 
 
+class MultiDocumentExtraction(BaseModel):
+    """Combined extraction output for one multi-document Langflow run."""
+
+    po: DocumentExtraction | None = None
+    gr: DocumentExtraction | None = None
+    invoice: DocumentExtraction | None = None
+    tax_invoice: DocumentExtraction | None = None
+    raw_text: str | None = None
+
+
 # ── Risk Report ───────────────────────────────────────────────────────────────
 
 
