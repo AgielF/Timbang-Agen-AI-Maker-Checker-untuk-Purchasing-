@@ -1,354 +1,388 @@
-# Timbang
+# Timbang — AI Maker-Checker untuk Pengadaan
 
-> **AI Maker–Checker for Fraud-Resistant Procurement** — catching inflated prices and SOP violations before payment is approved.
+> AI yang tidak halusinasi. Deteksi fraud pengadaan sebelum pembayaran.
 
-[![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688.svg)](https://fastapi.tiangolo.com/)
-[![Pydantic v2](https://img.shields.io/badge/Pydantic-v2-E92063.svg)](https://docs.pydantic.dev/)
-[![SQLAlchemy 2.0](https://img.shields.io/badge/SQLAlchemy-2.0-red.svg)](https://www.sqlalchemy.org/)
-[![Langflow](https://img.shields.io/badge/Langflow-integrated-orange.svg)](https://langflow.org/)
-[![Tests](https://img.shields.io/badge/tests-39%20passing-brightgreen.svg)](#testing)
-[![ruff](https://img.shields.io/badge/lint-ruff-purple.svg)](https://docs.astral.sh/ruff/)
-[![black](https://img.shields.io/badge/format-black-black.svg)](https://black.readthedocs.io/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
+[![Langflow](https://img.shields.io/badge/Langflow-1.12-orange.svg)](https://langflow.org/)
+[![Tests](https://img.shields.io/badge/tests-63%2B-brightgreen.svg)](#testing)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**Timbang** (Bahasa Indonesia: *menimbang*) adalah sistem AI Maker–Checker untuk deteksi fraud pengadaan di perusahaan menengah Indonesia tanpa ERP. Target submission: IBM SkillsBuild University Education National Hackathon 2026.
 
 ---
 
 ## Table of Contents
 
-- [Ringkasan](#ringkasan)
-- [Background](#background)
-- [What is Timbang](#what-is-timbang)
-- [Architecture](#architecture)
-- [Tech Stack](#tech-stack)
-- [Repository Structure](#repository-structure)
-- [Getting Started](#getting-started)
+- [Problem Statement](#problem-statement)
+- [Solution](#solution)
+- [Arsitektur Hybrid 3-Layer](#arsitektur-hybrid-3-layer)
+- [Fitur](#fitur)
+- [Cara Run](#cara-run)
+- [Struktur Folder](#struktur-folder)
 - [API Reference](#api-reference)
-- [Usage](#usage)
 - [Testing](#testing)
+- [Differentiator](#differentiator)
+- [Tech Stack](#tech-stack)
 - [Security](#security)
-- [Contributing](#contributing)
+- [Roadmap](#roadmap)
+- [Team](#team)
 - [License](#license)
 - [Acknowledgments](#acknowledgments)
 
 ---
 
-## Ringkasan
+## Problem Statement
 
-**Timbang** adalah sistem AI *Maker–Checker* untuk deteksi fraud pengadaan (procurement) di perusahaan menengah Indonesia yang belum memiliki ERP. Nama "Timbang" diambil dari kata Bahasa Indonesia yang berarti *menimbang* — proses mempertimbangkan secara cermat sebelum mengambil keputusan.
+Perusahaan menengah Indonesia kehilangan ~5% revenue/tahun akibat fraud pengadaan ([ACFE 2026](https://www.acfe.com/)). Tanpa ERP, tanpa sistem audit terintegrasi.
 
-Fraud pengadaan merupakan salah satu bentuk kecurangan bisnis paling umum di Indonesia. Menurut ACFE (2026), kerugian rata-rata akibat fraud pengadaan mencapai ~5% dari pendapatan tahunan perusahaan. Tanpa sistem ERP, staf purchasing sering kali harus memeriksa penawaran vendor, dokumen PO, dan invoice secara manual — proses yang lambat, rawan human error, dan mudah dimanipulasi.
+Tim purchasing mengelola quote vendor, PO, goods receipt, dan invoice lewat spreadsheet dan email. Blind spot yang sering dieksploitasi:
 
-Timbang menyelesaikan masalah ini dengan dua agen AI yang bekerja berpasangan: **Maker Agent** menganalisis penawaran vendor, melakukan cross-validasi harga dengan data pasar terkini, dan memberikan rekomendasi vendor terbaik. **Checker Agent** kemudian melakukan three-way matching (PO–GR–Invoice), validasi SOP, dan menghasilkan laporan risiko sebelum pembayaran disetujui.
-
-Status proyek untuk IBM SkillsBuild Hackathon 2026: **Maker Agent** sudah end-to-end (endpoint `/recommend` menghasilkan HTTP 200, respons Langflow ~62.9 detik). **Checker Agent** sudah tersedia di backend (three-way matching, validasi SOP, laporan risiko — 39 tests pass), namun integrasi Langflow-nya masih dalam pengerjaan untuk fase berikutnya.
-
----
-
-## Background
-
-Mid-sized Indonesian companies — those generating between IDR 10 billion and IDR 500 billion annually — typically lack the ERP systems that larger corporations use to automate procurement controls. Their purchasing teams manage vendor quotes, purchase orders, goods receipts, and invoices through spreadsheets and email, creating multiple blind spots that fraudsters exploit:
-
-- **Price inflation** — vendors quote above market rates, relying on the absence of automated benchmarking.
-- **Fictitious vendors** — payments approved to shell companies with no goods delivered.
-- **Document manipulation** — invoice amounts altered after goods receipt.
-- **SOP bypass** — high-value transactions approved without required secondary sign-off.
-
-Timbang addresses these gaps by automating the analytical work of a procurement auditor, running checks in near-real-time at the moment quotes and invoices are submitted.
+- **Price inflation** — penawaran di atas harga pasar tanpa benchmarking otomatis
+- **Fictitious vendors** — pembayaran ke vendor fiktif tanpa barang
+- **Document manipulation** — jumlah invoice diubah setelah barang diterima
+- **SOP bypass** — transaksi bernilai tinggi tanpa approval L2
 
 ---
 
-## What is Timbang
+## Solution
 
-Timbang is a **modular monolith** FastAPI backend that orchestrates two AI agents:
+Timbang mengotomasi kerja auditor pengadaan **sebelum pembayaran disetujui**, dengan keputusan akhir tetap di manusia.
 
-| Module | Agent Role | Responsibility | Key Output |
-|---|---|---|---|
-| `procurement` | **Maker Agent** | Vendor analysis, cross-price validation against market data, Langflow-powered recommendation | Ranked vendor recommendation + estimated savings |
-| `audit` | **Checker Agent** | Three-way matching (PO/GR/Invoice), SOP rule validation, risk report generation | Risk report + compliance status |
-
-Both modules share a common infrastructure layer (`shared/`) that handles configuration, database sessions, structured logging, rate limiting, and security middleware.
+- **Maker Agent** — analisis penawaran + cross-validate harga pasar (Serper / marketplace)
+- **Checker Agent** — 4-way matching (PO / GR / Invoice / Faktur Pajak) + SOP + citation guard
+- **Human-in-the-loop** — keputusan akhir di staf purchasing, bukan auto-approve
 
 ---
 
-## Architecture
+## Arsitektur Hybrid 3-Layer
 
-```
-router → service → repository → model
-```
+LLM **tidak** menghitung risiko. LLM mengekstrak dan menarasikan. Aturan, angka, dan bukti dijalankan di Python.
 
-- **router** — HTTP boundary: Pydantic validation, rate limiting, exception mapping to HTTP codes.
-- **service** — Business logic and orchestration; calls repositories and external agents (Langflow).
-- **repository** — The only layer that touches SQLAlchemy sessions directly.
-- **model** — SQLAlchemy 2.0 ORM entities and Pydantic schemas.
+```mermaid
+flowchart LR
+  FE[Frontend React 19]
+  BE[Backend FastAPI]
+  LF[Langflow flows]
+  R9[9Router]
+  LLM[Gemini / Groq / Cerebras]
 
-No layer may import upward (reversed dependency is forbidden). Each module exposes exactly one import surface: `public_api.py`.
-
-```
-[User: Purchasing / Finance Staff]
-            │
-            ▼
-[Frontend React]  ──(REST)──▶  [Backend FastAPI]
-                                    │
-                                    ├──▶ [PostgreSQL 16]
-                                    ├──▶ [Redis]  (rate limit)
-                                    ├──▶ [9Router] ──▶ [LLM Providers]
-                                    └──▶ [Langflow] (Maker & Checker flow)
+  FE -->|REST /api/v1| BE
+  BE --> LF
+  LF --> R9
+  R9 --> LLM
+  BE --> PG[(PostgreSQL / SQLite)]
+  BE --> RD[(Redis rate limit)]
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full C4 container diagram and architecture decision records.
+Dependensi backend selalu satu arah: `router → service → repository → model`. Modul lain hanya boleh import `public_api.py`.
+
+### Layer 1 — LLM Extraction (`checker_agent`)
+
+Terima PDF PO / GR / Invoice / Faktur Pajak → JSON terstruktur (`reference`, qty, amount, DPP, PPN, NPWP).
+
+Maker memakai flow terpisah: upload PDF penawaran → item, harga vendor, sitasi URL, skor vendor.
+
+### Layer 2 — Deterministic Engine (Python)
+
+| Check | Aturan |
+|---|---|
+| 4-way matching | Qty ±2%, amount/DPP ±1% (PO vs GR vs Invoice; FP sebagai dokumen ke-4) |
+| SOP validation | Transaksi > IDR 100 juta wajib approval L2 |
+| Faktur pajak | NPWP 15 digit, PPN ≈ 11% dari DPP, nomor FP 16 digit |
+| Citation guard | Temuan tanpa `evidence_url` atau `sop_clause_citation` **dibuang** |
+| Fraud labels | 6 tipe indikasi (lihat Checker) |
+| Math check | Total penawaran dihitung ulang, tidak percaya angka LLM |
+
+### Layer 3 — LLM Narrative (`risk_narrator`)
+
+Setelah engine selesai, flow narrator (opsional, `LANGFLOW_NARRATOR_FLOW_ID`) mengisi:
+
+- Executive summary
+- Pattern analysis
+- Dynamic recommendations
+
+Narasi **tidak** mengubah skor atau temuan. Temuan sudah di-persist lewat repository (audit trail yang bisa di-replay).
+
+Diagram C4 dan ADR: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## Tech Stack
+## Fitur
 
-| Layer | Library / Tool | Version | Notes |
-|---|---|---|---|
-| Web framework | FastAPI | ≥ 0.115 | Async, OpenAPI auto-docs |
-| Validation | Pydantic v2 + pydantic-settings | ≥ 2.9 / 2.6 | 12-Factor config |
-| ORM | SQLAlchemy async | 2.0 | asyncpg driver |
-| Migrations | Alembic | ≥ 1.14 | deferred for hackathon |
-| Rate limiting | slowapi | ≥ 0.1.9 | Redis-backed in prod |
-| Auth | python-jose | ≥ 3.3 | JWT HS256 (scaffolded) |
-| Logging | structlog | ≥ 24.4 | JSON in prod |
-| HTTP client | httpx | ≥ 0.28 | Langflow calls |
-| Agent flow | Langflow + 9Router | — | Maker Agent wired; Checker deferred |
-| Lint / format | ruff + black | ≥ 0.8 / 24.10 | CI-ready |
-| Tests | pytest + pytest-asyncio | ≥ 8.3 / 0.24 | 39 tests |
+### Maker Agent (`/maker`)
 
-**Deferred for hackathon deadline:** PostgreSQL in prod, Redis rate-limit backend, Docker, JWT runtime enforcement, Checker Agent Langflow flow.
+Modul `procurement` — rekomendasi vendor dari PDF penawaran.
 
----
+- Upload PDF, ekstraksi otomatis via Langflow (`POST /items/recommend-with-file`)
+- **Fokus item opsional** — kosongkan untuk *general scan* seluruh dokumen
+- Cross-validate harga via Serper API (di flow Langflow)
+- Sitasi URL per item (Tokopedia, Shopee, Lazada, dll.)
+- Skor vendor 0–100 (`kesimpulan.skor_vendor`)
+- Math check deterministik: `OK` / `WARNING` / `CRITICAL` jika total item ≠ total penawaran
+- Endpoint legacy: `GET /items/{item_name}/recommend` (tanpa file)
 
-## Repository Structure
+### Checker Agent (`/checker`)
 
-```
-project/
-├── .env.example            # Config template — copy to .env, fill in secrets
-├── .gitignore              # Sectioned; secrets, caches, DB files excluded
-├── AGENTS.md               # AI agent operating contract
-├── LICENSE                 # MIT © 2026 Agiel Fernanda
-├── README.md               # This file
-├── docs/
-│   ├── ARCHITECTURE.md     # C4 diagram, layer rules, ADRs
-│   ├── SECURITY.md         # OWASP controls, secret handling, commit checklist
-│   └── agents/
-│       └── BACKEND_AGENTS.md  # Coding rules for AI agents working on backend/
-├── tools/
-│   └── sanitize.sh         # Pre-commit secret scanner
-├── scripts/
-│   └── list_deps.sh        # Print Python env info + pip freeze
-├── langflow/               # Langflow flow exports (not committed — .gitignored)
-└── backend/
-    ├── pyproject.toml      # Build, dependencies, ruff/black/pytest config
-    ├── requirements.txt    # Frozen pip freeze from .venv
-    └── src/timbang/
-        ├── main.py         # FastAPI factory (create_app)
-        ├── shared/
-        │   ├── core/       # config, exceptions, logging, middleware
-        │   └── db/         # async engine, session factory, declarative base
-        ├── modules/
-        │   ├── procurement/  # Maker Agent — models, schemas, repo, service, router
-        │   └── audit/        # Checker Agent — models, schemas, repo, service, router
-        ├── scripts/
-        │   └── seed.py     # Idempotent demo data seeder
-        └── tests/          # 39 tests (service, E2E, rate-limit, Langflow)
-```
+Modul `audit` — matching dokumen + laporan risiko.
+
+- Upload 4 PDF (PO, GR, Invoice, FP) → `POST /transactions/{tx_id}/risk-report-with-files`
+- Tab UI: **Upload PDF** | **Input Manual**
+- 4-way matching (qty ±2%, amount ±1%)
+- SOP validation (threshold L2 100 juta IDR)
+- Faktur pajak validation (NPWP, PPN 11%, nomor FP)
+- Citation guard
+- 6 fraud indication labels:
+  - `PRICE_MANIPULATION`
+  - `QTY_DISCREPANCY`
+  - `SPLIT_PO`
+  - `DUPLICATE_INVOICE`
+  - `UNAUTHORIZED_APPROVAL`
+  - `INCOMPLETE_DOCS`
+- Layer 3 narrative (jika narrator flow dikonfigurasi)
+- Risk score 0–100 di UI (`/checker/risk-report`) dari severity laporan
+
+Halaman lain: landing `/`, Coming Soon untuk Dashboard, Vendor Management, Findings, About.
 
 ---
 
-## Getting Started
+## Cara Run
 
 ### Prerequisites
 
-- Python ≥ 3.12 (tested on 3.14)
-- A running PostgreSQL 16 instance **or** SQLite for local development
-- Redis (optional for dev — rate limiting falls back to in-memory)
-- Langflow instance with the Maker Agent flow loaded (for `/recommend` endpoint)
+- Python 3.12+
+- Node 20+
+- Langflow 1.12 (Maker, Checker, Narrator flows)
+- 9Router (gateway multi-LLM)
+- Serper API key (untuk sitasi harga pasar di Maker flow)
+- PostgreSQL 16 **atau** SQLite untuk dev; Redis opsional (rate limit in-memory di dev)
 
-### Installation
+### Setup
 
 ```bash
-git clone https://github.com/<your-org>/timbang.git
-cd timbang
+git clone https://github.com/AgielF/Timbang-Agen-AI-Maker-Checker-untuk-Purchasing-.git
+cd Timbang-Agen-AI-Maker-Checker-untuk-Purchasing-
 
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e "backend/[dev]"
+cd frontend && npm install && cd ..
 
-# Install backend with dev extras
-cd backend
-pip install -e ".[dev]"
+cp .env.example .env   # isi config — jangan commit .env
+cp frontend/.env.example frontend/.env   # VITE_API_BASE_URL
+
+./dev.sh
 ```
 
-Alternatively, install from the frozen requirements file:
+`dev.sh` menjalankan backend `:8000` dan frontend `:5173`.
+
+- Backend health: http://127.0.0.1:8000/health
+- Swagger (jika `DEBUG=true`): http://127.0.0.1:8000/docs
+- Frontend Maker: http://localhost:5173/maker
+- Frontend Checker: http://localhost:5173/checker
+
+Jalankan API saja:
 
 ```bash
-pip install -r backend/requirements.txt
-```
-
-### Environment Variables
-
-Copy `.env.example` to `.env` and fill in each value. **Never commit `.env`.**
-
-| Variable | Description |
-|---|---|
-| `APP_NAME` | Application display name |
-| `APP_ENV` | Runtime environment: `dev`, `staging`, or `prod` |
-| `DEBUG` | Enable debug mode and `/docs` Swagger UI |
-| `DATABASE_URL` | Async SQLAlchemy URL (`postgresql+asyncpg://...` or `sqlite+aiosqlite://...`) |
-| `REDIS_URL` | Redis connection URL (rate limiting in production) |
-| `JWT_SECRET` | Secret key for JWT signing — set a long random string |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | JWT expiry window (default: 30) |
-| `ROUTER_BASE_URL` | 9Router base URL for LLM routing |
-| `ROUTER_API_KEY` | 9Router API key |
-| `CORS_ORIGINS` | Comma-separated allowed origins (e.g. `http://localhost:5173`) |
-| `LANGFLOW_BASE_URL` | Langflow server URL |
-| `LANGFLOW_API_KEY` | Langflow API key (optional if auth disabled) |
-| `LANGFLOW_MAKER_FLOW_ID` | UUID of the Maker Agent flow in Langflow |
-| `LANGFLOW_TIMEOUT_SECONDS` | HTTP timeout for Langflow calls (default: 120) |
-
-### Seeding the Database
-
-```bash
-# From project root, with .venv activated
-python3 -m timbang.scripts.seed
-```
-
-Override the database URL for seeding:
-
-```bash
-SEED_DATABASE_URL=sqlite+aiosqlite:///demo.db python3 -m timbang.scripts.seed
-```
-
-### Running the API
-
-```bash
-# From project root, with .venv activated
 uvicorn timbang.main:app --reload --app-dir backend/src
 ```
 
-The API will be available at `http://localhost:8000`. When `DEBUG=true`, Swagger UI is served at `http://localhost:8000/docs`.
-
-### Dependencies
-
-Print the current Python environment and all installed packages:
+### Generate sample PDFs
 
 ```bash
-./scripts/list_deps.sh
+.venv/bin/python backend/scripts/generate_sample_pdfs.py
 ```
 
-Or inspect the frozen snapshot directly:
+Output di `sample-docs/` (PO, GR, Invoice, Faktur Pajak) untuk uji upload Checker.
+
+### Environment variables
+
+Salin dari [`.env.example`](.env.example). **Jangan hardcode secret.**
+
+| Variable | Deskripsi |
+|---|---|
+| `APP_NAME` / `APP_ENV` / `DEBUG` | Identitas runtime; `DEBUG=true` mengaktifkan `/docs` |
+| `DATABASE_URL` | SQLAlchemy async (`postgresql+asyncpg://...` atau `sqlite+aiosqlite://...`) |
+| `REDIS_URL` | Redis (rate limit production) |
+| `JWT_SECRET` | Signing key JWT — string acak panjang |
+| `ROUTER_BASE_URL` / `ROUTER_API_KEY` | 9Router |
+| `CORS_ORIGINS` | Origin frontend, mis. `http://localhost:5173` |
+| `LANGFLOW_BASE_URL` / `LANGFLOW_API_KEY` | Server Langflow |
+| `LANGFLOW_MAKER_FLOW_ID` | UUID flow Maker |
+| `LANGFLOW_CHECKER_FLOW_ID` | UUID flow ekstraksi 4 PDF |
+| `LANGFLOW_NARRATOR_FLOW_ID` | UUID flow Layer 3 (opsional) |
+| `LANGFLOW_FILE_NODE_IDS` | JSON mapping node File Langflow (opsional) |
+| `LANGFLOW_TIMEOUT_SECONDS` | Timeout HTTP ke Langflow (default 120) |
+| `VITE_API_BASE_URL` | Base URL API di `frontend/.env` |
+
+### Seed database (opsional)
 
 ```bash
-cat backend/requirements.txt
+python3 -m timbang.scripts.seed
+```
+
+---
+
+## Struktur Folder
+
+Frontend memakai **Atomic Design** (`atoms` → `molecules` → `organisms` → `templates` → `pages`). Backend **modular monolith**: `procurement` (Maker + vendor/quote) dan `audit` (Checker).
+
+```
+.
+├── .env.example
+├── AGENTS.md                 # kontrak AI agent di repo ini
+├── LICENSE                   # MIT © 2026 Agiel Fernanda
+├── README.md
+├── dev.sh                    # backend + frontend
+├── backend/
+│   ├── pyproject.toml
+│   ├── scripts/
+│   │   └── generate_sample_pdfs.py
+│   ├── tests/                # 63+ pytest
+│   └── src/timbang/
+│       ├── main.py
+│       ├── shared/           # config, middleware, db
+│       └── modules/
+│           ├── procurement/  # Maker Agent
+│           └── audit/        # Checker Agent
+├── frontend/
+│   └── src/
+│       ├── pages/            # Landing, Maker, Checker, RiskReport, …
+│       └── components/
+│           ├── atoms/
+│           ├── molecules/
+│           ├── organisms/
+│           └── templates/
+├── docs/                     # arsitektur, security, frontend, agents
+├── langflow/                 # export flow (gitignored)
+├── sample-docs/              # PDF contoh (generated)
+└── tools/sanitize.sh         # scan secret sebelum commit
 ```
 
 ---
 
 ## API Reference
 
-All endpoints are prefixed under `/api/v1/` except `/health`.
+Prefix `/api/v1/` kecuali `/health`.
 
-| Method | Path | Description | Rate Limit |
-|---|---|---|---|
-| `GET` | `/health` | Service health check | None |
-| `GET` | `/api/v1/procurement/vendors` | List all registered vendors | 120/min |
-| `POST` | `/api/v1/procurement/vendors` | Register a new vendor | 30/min |
-| `POST` | `/api/v1/procurement/vendors/{vendor_id}/quotes` | Submit a price quote for a vendor | 60/min |
-| `GET` | `/api/v1/procurement/items/{item_name}/validate` | Cross-validate prices across all vendor quotes | 60/min |
-| `GET` | `/api/v1/procurement/items/{item_name}/recommend` | **Maker Agent** — LLM-powered vendor recommendation via Langflow | 10/min |
-| `POST` | `/api/v1/audit/findings` | Create a new audit finding | 60/min |
-| `GET` | `/api/v1/audit/findings/{finding_id}` | Retrieve a single audit finding | 120/min |
-| `POST` | `/api/v1/audit/transactions/{transaction_id}/match` | **Checker Agent** — Three-way matching (PO / GR / Invoice) | 60/min |
-| `POST` | `/api/v1/audit/transactions/{transaction_id}/risk-report` | **Checker Agent** — Generate full risk report for a transaction | 10/min |
+| Method | Path | Peran |
+|---|---|---|
+| `GET` | `/health` | Health check |
+| `GET` | `/api/v1/procurement/vendors` | Daftar vendor |
+| `POST` | `/api/v1/procurement/vendors` | Daftar vendor baru |
+| `POST` | `/api/v1/procurement/vendors/{id}/quotes` | Submit quote |
+| `GET` | `/api/v1/procurement/items/{item}/validate` | Cross-validate harga (outlier > 30% median) |
+| `GET` | `/api/v1/procurement/items/{item}/recommend` | Maker tanpa file |
+| `POST` | `/api/v1/procurement/items/recommend-with-file` | **Maker** — PDF + item opsional |
+| `POST` | `/api/v1/audit/findings` | Buat temuan |
+| `GET` | `/api/v1/audit/findings/{id}` | Baca temuan |
+| `POST` | `/api/v1/audit/transactions/{id}/match` | Matching (body PO/GR/Invoice) |
+| `POST` | `/api/v1/audit/transactions/{id}/risk-report` | Risk report (input JSON) |
+| `POST` | `/api/v1/audit/transactions/{id}/risk-report-with-files` | **Checker** — 4 PDF |
 
-### Example: Maker Agent Recommendation
-
-```bash
-curl -X GET \
-  "http://localhost:8000/api/v1/procurement/items/laptop/recommend" \
-  -H "Accept: application/json"
-```
-
-> ⏱ **Note:** This endpoint calls Langflow synchronously. Expect a response time of approximately 60 seconds when the LLM is cold. Ensure `LANGFLOW_TIMEOUT_SECONDS` is set to at least `120`.
-
----
-
-## Usage
-
-A typical end-to-end procurement audit flow:
-
-1. **Register vendors** — `POST /api/v1/procurement/vendors` for each vendor participating in the tender.
-2. **Submit quotes** — `POST /api/v1/procurement/vendors/{vendor_id}/quotes` for each item quote received.
-3. **Validate prices** — `GET /api/v1/procurement/items/{item_name}/validate` to cross-check quotes; outliers (> 30% from median) are flagged.
-4. **Get recommendation** — `GET /api/v1/procurement/items/{item_name}/recommend` calls the Maker Agent (Langflow) for an AI-powered vendor recommendation with market-price citations.
-5. **Three-way match** — `POST /api/v1/audit/transactions/{id}/match` after goods are received; compares PO, Goods Receipt, and Invoice (tolerances: qty ±2%, amount ±1%).
-6. **Generate risk report** — `POST /api/v1/audit/transactions/{id}/risk-report` for the full Checker Agent report including SOP compliance (e.g. transactions > IDR 100,000,000 require level-2 approval).
+Rate limit per IP (slowapi). Endpoint LLM lebih ketat (`10/min` / `5/min`). Kontrak frontend: [docs/frontend/API_CONTRACT.md](docs/frontend/API_CONTRACT.md).
 
 ---
 
 ## Testing
 
 ```bash
-cd backend
-pytest -q
+cd backend && pytest -q
 ```
 
-**Current status: 39 tests pass, 0 failures, 0 skipped.**
-
-Test coverage:
-
-| File | Scope |
-|---|---|
-| `test_health.py` | Health endpoint |
-| `test_procurement_service.py` | Cross-validate, register vendor, submit quote |
-| `test_audit_service.py` | Three-way matching, SOP validation, risk report |
-| `test_e2e_smoke.py` | Full HTTP cycle via `httpx.AsyncClient` |
-| `test_rate_limit.py` | Rate limit enforcement (429 responses) |
-| `test_procurement_langflow.py` | Langflow integration (mocked HTTP) |
-
-Run with coverage:
+**Backend: pytest (63+ tests)** — service Maker/Checker, citation guard, SOP, faktur pajak, file upload, Langflow mock, E2E HTTP, rate limit.
 
 ```bash
 pytest --cov=timbang --cov-report=term-missing -q
 ```
 
+**Frontend:**
+
+```bash
+cd frontend
+npm run lint    # oxlint
+npm run build
+```
+
+**E2E manual:** buka `/checker`, tab Upload PDF, unggah 4 file dari `sample-docs/`, Run, lalu Generate Risk Report.
+
+Lint backend: `ruff check . && black --check .` (dari `backend/`). Sanitasi: `./tools/sanitize.sh`.
+
+---
+
+## Differentiator
+
+1. **Honest AI** — tidak halusinasi angka; math check dan matching di Python
+2. **Deterministic + LLM** — auditable (aturan tetap) + narasi kaya (Layer 3)
+3. **Citation guard** — temuan tanpa bukti tidak pernah masuk laporan
+4. **Layer 3 narrative** — summary eksekutif tanpa mengubah verdict engine
+5. **Multi-LLM gateway (9Router)** — Gemini / Groq / Cerebras tanpa lock-in satu provider
+6. **Auditable + replayable (AuditChain)** — findings & check results tersimpan, bisa diulang dengan input yang sama
+
+---
+
+## Tech Stack
+
+| Layer | Stack |
+|---|---|
+| Frontend | React 19, Vite 8, Tailwind 3.4, React Router 6 |
+| Backend | FastAPI 0.115+, Pydantic v2, SQLAlchemy 2.0 async, slowapi, structlog |
+| Agents | Langflow 1.12, 9Router, Gemini / Groq / Cerebras |
+| Data | PostgreSQL 16, Redis, SQLite (dev) |
+| PDF | Ekstraksi via Langflow File nodes; sample docs via reportlab |
+| Quality | pytest, ruff, black, oxlint |
+
+Modular monolith — bukan microservices. Konfigurasi 12-Factor (semua lewat env).
+
 ---
 
 ## Security
 
-- All secrets are injected via environment variables — never hardcoded. See [docs/SECURITY.md](docs/SECURITY.md).
-- Run `./tools/sanitize.sh` before every commit to scan for accidentally staged secrets.
-- `.env`, `*.key`, `mcp.json`, `.bob/` are permanently `.gitignore`d.
-- Rate limiting is enforced per IP address on every endpoint (slowapi + Redis in production).
-- Security headers applied to every response: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`.
-- CORS origins are explicitly allowlisted via `CORS_ORIGINS` env var.
-- Stack traces never leak to production API responses — domain exceptions are mapped to HTTP codes in the router layer.
-- OWASP API Security Top 10 (2023) controls documented in [docs/SECURITY.md](docs/SECURITY.md).
+- Secret hanya dari environment — lihat [docs/SECURITY.md](docs/SECURITY.md)
+- `.env`, `*.key`, `mcp.json`, `.bob/` di `.gitignore`
+- Rate limit per IP; CORS allowlist; security headers
+- Exception domain dipetakan di router — stack trace tidak bocor ke klien
+- OWASP API Security Top 10 (2023)
 
 ---
 
-## Contributing
+## Roadmap
 
-This repository is developed under a competitive hackathon deadline (**IBM SkillsBuild University Education National Hackathon 2026 — Hacktiv8 × IBM**, due 4 October 2026). External contributions are closed during this period.
+### Done
 
-After the competition, contributions are welcome. Please open an issue first to discuss what you would like to change, and follow the [Conventional Commits](https://www.conventionalcommits.org/) format.
+- Maker + Checker + Layer 3 + arsitektur hybrid 3-layer
+- UI Maker (`/maker`) dan Checker (upload + manual)
+- Citation guard, SOP L2, validasi faktur pajak, 6 fraud labels
+- 63+ backend tests
+
+### Phase 2
+
+- Excel support (`.xlsx`)
+- Astra DB vector store untuk SOP clause
+- Split PO detection (label sudah ada; deteksi otomatis belum)
+- Duplicate invoice detection (label sudah ada; deteksi otomatis belum)
+- PDF approval doc export
+- MCP Server + Bob Host
+- Real-time monitoring (WebSocket)
+- Multi-tenant SaaS
+
+---
+
+## Team
+
+**Agiel Fernanda** — Full-stack + AI orchestration
 
 ---
 
 ## License
 
-MIT © 2026 Agiel Fernanda. See [LICENSE](LICENSE).
+MIT © 2026 Agiel Fernanda. Lihat [LICENSE](LICENSE).
 
 ---
 
 ## Acknowledgments
 
-- **IBM SkillsBuild** and **Hacktiv8** — for organising the competition and providing the challenge brief.
-- **Langflow** — for making LLM agent orchestration accessible without infrastructure overhead.
-- **FastAPI** (Sebastián Ramírez) — for the best async Python web framework available.
-- **Pydantic** — for making data validation a first-class citizen in Python.
-- **SQLAlchemy** — for robust, async-capable ORM support.
-- **ruff** and **black** — for keeping the codebase clean with zero friction.
-- **ACFE (Association of Certified Fraud Examiners)** — for the 2026 fraud statistics that motivated this project.
+- IBM SkillsBuild University Education National Hackathon 2026
+- Hacktiv8, Langflow, 9Router communities
+- ACFE — statistik fraud 2026 yang menjadi motivasi masalah
+- FastAPI, Pydantic, SQLAlchemy, ruff, black
