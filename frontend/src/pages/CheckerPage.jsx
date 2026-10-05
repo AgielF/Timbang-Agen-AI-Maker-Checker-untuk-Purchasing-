@@ -12,9 +12,18 @@ import { SAMPLE_TRANSACTION_ID, SAMPLE_DOCS } from '../lib/constants';
 const fmtIDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
 
 // PO/GR/Invoice shapes for MatchGrid display (keys match what organism renders)
-const DISPLAY_PO      = { reference: SAMPLE_DOCS.po.reference,      quantity: SAMPLE_DOCS.po.quantity,      amount: SAMPLE_DOCS.po.amount,      currency: SAMPLE_DOCS.po.currency };
+const DISPLAY_PO      = { reference: SAMPLE_DOCS.po.reference,      quantity: SAMPLE_DOCS.po.quantity,      amount: SAMPLE_DOCS.po.amount,      currency: SAMPLE_DOCS.po.currency, npwp_vendor: SAMPLE_DOCS.po.npwp_vendor };
 const DISPLAY_GR      = { reference: SAMPLE_DOCS.gr.reference,      quantity: SAMPLE_DOCS.gr.quantity,      amount: SAMPLE_DOCS.gr.amount,      currency: SAMPLE_DOCS.gr.currency };
-const DISPLAY_INVOICE = { reference: SAMPLE_DOCS.invoice.reference, quantity: SAMPLE_DOCS.invoice.quantity, amount: SAMPLE_DOCS.invoice.amount, currency: SAMPLE_DOCS.invoice.currency };
+const DISPLAY_INVOICE = {
+  reference: SAMPLE_DOCS.invoice.reference,
+  quantity: SAMPLE_DOCS.invoice.quantity,
+  amount: SAMPLE_DOCS.invoice.amount,
+  currency: SAMPLE_DOCS.invoice.currency,
+  tax_invoice_ref: SAMPLE_DOCS.invoice.tax_invoice_ref,
+  dpp_amount: SAMPLE_DOCS.invoice.dpp_amount,
+  ppn_amount: SAMPLE_DOCS.invoice.ppn_amount,
+  npwp_vendor: SAMPLE_DOCS.invoice.npwp_vendor,
+};
 
 function VerdictBanner({ matched, discrepancies }) {
   if (matched) {
@@ -56,7 +65,7 @@ function DeltaTable({ po, invoice }) {
         </thead>
         <tbody>
           <tr className="border-b border-[var(--border-dark)] last:border-0 bg-amber/5">
-            <td className="px-4 py-2 font-medium text-amber uppercase text-xs tracking-wider">amount</td>
+            <td className="px-4 py-2 font-medium text-amber uppercase text-xs tracking-wider">DPP</td>
             <td className="px-4 py-2 text-right font-mono tabular-nums text-[var(--color-text-inv)]">{po != null ? fmtIDR.format(po) : '—'}</td>
             <td className="px-4 py-2 text-right font-mono tabular-nums text-[var(--color-text-inv-mute)]">{fmtIDR.format(SAMPLE_DOCS.gr.amount)}</td>
             <td className="px-4 py-2 text-right font-mono tabular-nums text-amber">{invoice != null ? fmtIDR.format(invoice) : '—'}</td>
@@ -123,7 +132,7 @@ export default function CheckerPage() {
               differences={data.matched ? [] : ['amount', 'quantity']}
               status={data.matched ? 'matched' : 'discrepancy'}
             />
-            <DeltaTable po={SAMPLE_DOCS.po.amount} invoice={SAMPLE_DOCS.invoice.amount} />
+            <DeltaTable po={SAMPLE_DOCS.po.amount} invoice={SAMPLE_DOCS.invoice.dpp_amount ?? SAMPLE_DOCS.invoice.amount} />
             <div className="flex justify-end pt-2">
               <Button
                 variant="primary"

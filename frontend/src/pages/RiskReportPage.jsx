@@ -27,14 +27,17 @@ const fmtTs = (iso) => {
 };
 
 // Map API finding shape → FindingList shape
-// API: { id, transaction_id, po_number, severity, amount, currency, description, sop_reference, created_at }
-// FindingList expects: { id, transaction_id, severity, message, created_at }
+// Preserve the audit evidence fields and fraud indication for FindingList.
 function mapFinding(f) {
   return {
     id:             f.id,
     transaction_id: f.po_number ?? f.transaction_id,
     severity:       (f.severity ?? '').toLowerCase(),
     message:        f.description ?? f.sop_reference ?? '—',
+    indication_label: f.indication_label ?? 'UNKNOWN',
+    evidence_url: f.evidence_url ?? null,
+    sop_clause_citation: f.sop_clause_citation ?? null,
+    evidence_type: f.evidence_type ?? '',
     created_at:     f.created_at,
   };
 }
@@ -129,8 +132,6 @@ export default function RiskReportPage() {
           </div>
           <div className="flex items-center gap-2 shrink-0 mt-1">
             {data && <StatusBadge status={data.overall_status} />}
-            <Button variant="ghost" size="sm" disabled>Export PDF</Button>
-            <Badge variant="warning">Coming Soon</Badge>
           </div>
         </div>
       }
