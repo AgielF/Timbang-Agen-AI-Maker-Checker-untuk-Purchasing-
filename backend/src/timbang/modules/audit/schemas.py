@@ -79,12 +79,16 @@ class CheckResultRead(BaseModel):
 
 
 class DocumentData(BaseModel):
-    """Generic representation of PO / Goods Receipt / Invoice data."""
+    """PO / Goods Receipt / Invoice data, with optional e-Faktur fields."""
 
     quantity: Decimal
     amount: Decimal
     currency: str = "IDR"
     reference: str = ""
+    tax_invoice_ref: str = ""
+    ppn_amount: Decimal | None = None
+    npwp_vendor: str = ""
+    dpp_amount: Decimal | None = None
 
 
 class MatchResult(BaseModel):
@@ -96,6 +100,11 @@ class MatchResult(BaseModel):
 
 
 class SopValidationResult(BaseModel):
+    passed: bool
+    violations: list[str]
+
+
+class TaxInvoiceValidationResult(BaseModel):
     passed: bool
     violations: list[str]
 

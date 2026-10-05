@@ -223,6 +223,7 @@ async def test_risk_report_creates_finding(client):
             "amount": "150000000",  # > 100jt → SOP violation without L2 approval
             "currency": "IDR",
             "reference": "PO-RISK-001",
+            "npwp_vendor": "123456789012345",
         },
         "gr": {"quantity": "50", "amount": "150000000", "currency": "IDR", "reference": "GR-R"},
         "invoice": {
@@ -230,6 +231,10 @@ async def test_risk_report_creates_finding(client):
             "amount": "151500000",  # 1% deviation — at boundary, should FAIL (>1%)
             "currency": "IDR",
             "reference": "INV-R",
+            "tax_invoice_ref": "0101234567890123",
+            "ppn_amount": "16500000",
+            "npwp_vendor": "123456789012345",
+            "dpp_amount": "150000000",
         },
         "has_level2_approval": False,
         "has_complete_docs": True,

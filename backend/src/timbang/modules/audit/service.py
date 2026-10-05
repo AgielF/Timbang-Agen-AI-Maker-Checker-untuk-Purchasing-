@@ -2,7 +2,7 @@
 
 Rules (docs/agents/BACKEND_AGENTS.md):
 - Does NOT import AsyncSession — only repository interfaces.
-- Orchestrates three-way matching and SOP validation.
+- Orchestrates matching, SOP validation, and tax-invoice validation.
 """
 
 from __future__ import annotations
@@ -21,12 +21,20 @@ from timbang.modules.audit.schemas import (
     MatchResult,
     RiskReportResponse,
     SopValidationResult,
+    TaxInvoiceValidationResult,
 )
 
 log = structlog.get_logger(__name__)
 
 # SOP thresholds
 _SOP_L2_APPROVAL_THRESHOLD = Decimal("100_000_000")  # 100 juta IDR → level 2 approval required
+
+
+def _is_valid_tax_invoice_ref(ref: str) -> bool:
+    if not ref:
+        return False
+    digits = "".join(character for character in ref if character.isdigit())
+    return len(digits) == 16
 
 
 def _citation_guard(findings: list[dict]) -> list[dict]:
@@ -48,7 +56,7 @@ def _indication_for_discrepancy(discrepancy: str) -> FraudIndication:
     text = discrepancy.lower()
     if "quantity" in text:
         return FraudIndication.QTY_DISCREPANCY
-    if "amount" in text:
+    if "amount" in text or "dpp" in text:
         return FraudIndication.PRICE_MANIPULATION
     if "duplicate" in text:
         return FraudIndication.DUPLICATE_INVOICE
@@ -114,9 +122,9 @@ class AuditService:
         gr_data: DocumentData,
         invoice_data: DocumentData,
     ) -> MatchResult:
-        """Compare quantity and amount between PO, Goods Receipt, and Invoice.
+        """Compare quantity and value between PO, Goods Receipt, and Invoice.
 
-        Tolerance: quantity ±2%, amount ±1%.
+        Tolerance: quantity ±2%, amount/DPP ±1%.
         Pure business logic — no I/O needed, no async.
         """
         discrepancies: list[str] = []
@@ -141,10 +149,17 @@ class AuditService:
 
         # Amount checks
         if po_data.amount > 0:
-            amt_diff_inv = abs(invoice_data.amount - po_data.amount) / po_data.amount
+            if invoice_data.dpp_amount is not None and invoice_data.dpp_amount > 0:
+                invoice_amount_to_compare = invoice_data.dpp_amount
+                invoice_amount_label = "DPP"
+            else:
+                invoice_amount_to_compare = invoice_data.amount
+                invoice_amount_label = "amount"
+            amt_diff_inv = abs(invoice_amount_to_compare - po_data.amount) / po_data.amount
             if amt_diff_inv > amt_tolerance:
                 discrepancies.append(
-                    f"Invoice amount {invoice_data.amount} deviates from PO {po_data.amount} "
+                    f"Invoice {invoice_amount_label} {invoice_amount_to_compare} "
+                    f"deviates from PO {po_data.amount} "
                     f"by {amt_diff_inv * 100:.2f}% (tolerance 1%)"
                 )
             amt_diff_gr = abs(gr_data.amount - po_data.amount) / po_data.amount
@@ -155,6 +170,54 @@ class AuditService:
                 )
 
         return MatchResult(matched=len(discrepancies) == 0, discrepancies=discrepancies)
+
+    def validate_tax_invoice(
+        self,
+        po_data: DocumentData,
+        invoice_data: DocumentData,
+    ) -> TaxInvoiceValidationResult:
+        """Validate the invoice's NPWP, VAT amount, and tax invoice number."""
+        violations: list[str] = []
+        po_npwp = po_data.npwp_vendor.strip()
+        invoice_npwp = invoice_data.npwp_vendor.strip()
+        npwp_values = [value for value in (po_npwp, invoice_npwp) if value]
+
+        if not npwp_values:
+            violations.append("NPWP vendor kosong — harus 15 digit numerik")
+        for npwp in npwp_values:
+            digits_only = "".join(character for character in npwp if character.isdigit())
+            if len(digits_only) != 15:
+                violations.append(f"NPWP '{npwp}' tidak valid — harus 15 digit numerik")
+
+        if po_npwp and invoice_npwp:
+            po_digits = "".join(character for character in po_npwp if character.isdigit())
+            invoice_digits = "".join(character for character in invoice_npwp if character.isdigit())
+            if po_digits != invoice_digits:
+                violations.append("NPWP vendor pada PO dan faktur pajak tidak konsisten")
+
+        if invoice_data.ppn_amount is not None and invoice_data.dpp_amount is not None:
+            if invoice_data.dpp_amount > 0:
+                expected_ppn = invoice_data.dpp_amount * Decimal("0.11")
+                actual_ppn = invoice_data.ppn_amount
+                diff_pct = abs(actual_ppn - expected_ppn) / expected_ppn * Decimal("100")
+                if diff_pct > Decimal("2.0"):
+                    violations.append(
+                        f"PPN {actual_ppn:,.0f} tidak sesuai — "
+                        f"seharusnya ≈{expected_ppn:,.0f} (11% dari DPP)"
+                    )
+
+        if invoice_data.ppn_amount is not None and invoice_data.ppn_amount > 0:
+            if not invoice_data.tax_invoice_ref.strip():
+                violations.append("PPN > 0 tapi nomor faktur pajak kosong")
+
+        tax_invoice_ref = invoice_data.tax_invoice_ref.strip()
+        if tax_invoice_ref and not _is_valid_tax_invoice_ref(tax_invoice_ref):
+            violations.append(
+                f"Nomor faktur pajak '{tax_invoice_ref}' tidak valid — "
+                "harus 3 digit kode pajak + 13 digit"
+            )
+
+        return TaxInvoiceValidationResult(passed=not violations, violations=violations)
 
     # ── SOP validation ────────────────────────────────────────────────────────
 
@@ -196,7 +259,7 @@ class AuditService:
         has_level2_approval: bool = False,
         has_complete_docs: bool = True,
     ) -> RiskReportResponse:
-        """Orchestrate three-way matching + SOP validation, persist findings."""
+        """Orchestrate three-way matching, SOP and tax validation; persist findings."""
         findings: list[AuditFindingRead] = []
         overall_status = "PASS"
         severity = "LOW"
@@ -245,6 +308,11 @@ class AuditService:
             has_level2_approval=has_level2_approval,
             has_complete_docs=has_complete_docs,
         )
+        tax_invoice_result = (
+            self.validate_tax_invoice(po_data, invoice_data)
+            if po_data is not None and invoice_data is not None
+            else None
+        )
         if not sop_result.passed:
             if overall_status == "PASS":
                 overall_status = "WARN"
@@ -275,6 +343,52 @@ class AuditService:
                         "check_status": "WARN",
                         "check_notes": violation,
                         "recommendation": f"SOP violation: {violation}",
+                    }
+                )
+
+        if tax_invoice_result and not tax_invoice_result.passed:
+            if overall_status == "PASS":
+                overall_status = "WARN"
+            tax_has_price_violation = any(
+                "ppn" in violation.lower() and "tidak sesuai" in violation.lower()
+                for violation in tax_invoice_result.violations
+            )
+            if tax_has_price_violation:
+                severity = "HIGH"
+            elif overall_status != "FAIL":
+                severity = "MEDIUM"
+
+            for violation in tax_invoice_result.violations:
+                is_price_violation = (
+                    "ppn" in violation.lower() and "tidak sesuai" in violation.lower()
+                )
+                finding_data = AuditFindingCreate(
+                    transaction_id=transaction_id,
+                    po_number=po_data.reference,
+                    severity="HIGH" if is_price_violation else "MEDIUM",
+                    amount=invoice_data.amount,
+                    description=violation,
+                    sop_reference="TAX_INVOICE_VALIDATION",
+                    evidence_url=f"invoice:{invoice_data.reference}",
+                    sop_clause_citation=(
+                        "SOP-03: Faktur pajak harus valid — NPWP 15 digit, PPN 11% dari DPP"
+                    ),
+                    evidence_type="TAX_INVOICE",
+                    indication_label=(
+                        FraudIndication.PRICE_MANIPULATION
+                        if is_price_violation
+                        else FraudIndication.INCOMPLETE_DOCS
+                    ),
+                )
+                pending_findings.append(
+                    {
+                        "description": violation,
+                        "evidence_url": finding_data.evidence_url,
+                        "sop_clause_citation": finding_data.sop_clause_citation,
+                        "finding_data": finding_data,
+                        "check_status": "WARN",
+                        "check_notes": violation,
+                        "recommendation": f"Tax invoice violation: {violation}",
                     }
                 )
 
