@@ -10,12 +10,13 @@ export class ApiError extends Error {
 }
 
 async function request(path, { method = 'GET', body, signal } = {}) {
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
   let res
   try {
     res = await fetch(`${API_BASE_URL}${path}`, {
       method,
-      headers: { 'Content-Type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
+      headers: isFormData || !body ? undefined : { 'Content-Type': 'application/json' },
+      body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
       signal,
     })
   } catch (e) {
@@ -37,6 +38,25 @@ async function request(path, { method = 'GET', body, signal } = {}) {
     throw new ApiError(String(detail), res.status, data)
   }
   return data
+}
+
+export async function riskReportFromFiles(txId, files, options = {}) {
+  const form = new FormData()
+  form.append('po_file', files.poFile)
+  form.append('gr_file', files.grFile)
+  form.append('invoice_file', files.invoiceFile)
+  if (files.taxInvoiceFile) form.append('tax_invoice_file', files.taxInvoiceFile)
+  form.append('has_level2_approval', String(options.hasLevel2Approval))
+  form.append('has_complete_docs', String(options.hasCompleteDocs))
+
+  return request(
+    `/api/v1/audit/transactions/${encodeURIComponent(txId)}/risk-report-with-files`,
+    {
+      method: 'POST',
+      body: form,
+      signal: options.signal,
+    },
+  )
 }
 
 export const api = {

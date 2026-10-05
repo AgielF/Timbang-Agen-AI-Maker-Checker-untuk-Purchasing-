@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api } from '../lib/api'
+import { api, riskReportFromFiles } from '../lib/api'
 import { API_BASE_URL } from '../lib/constants'
 
 export function useApi(fn) {
@@ -44,6 +44,67 @@ export function useApi(fn) {
 
 export const useMatchThreeWay = () => useApi(api.matchThreeWay)
 export const useRiskReport = () => useApi(api.riskReport)
+
+export function useRiskReportFromFiles() {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const abortRef = useRef(null)
+
+  const reset = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setData(null)
+    setError(null)
+    setLoading(false)
+  }, [])
+
+  const submit = useCallback(async (txId, files, options = {}) => {
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    let timedOut = false
+    const timeoutId = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, 120_000)
+
+    setLoading(true)
+    setError(null)
+    setData(null)
+
+    try {
+      const result = await riskReportFromFiles(txId, files, {
+        ...options,
+        signal: controller.signal,
+      })
+      setData(result)
+      return result
+    } catch (cause) {
+      if (cause?.name === 'AbortError' && !timedOut) return undefined
+      if (cause?.name === 'AbortError') {
+        const timeoutError = new Error('Request timeout, coba lagi.')
+        setError(timeoutError)
+        throw timeoutError
+      }
+      const requestError = cause instanceof Error
+        ? cause
+        : new Error('Terjadi kesalahan saat memproses dokumen.')
+      setError(requestError)
+      throw requestError
+    } finally {
+      clearTimeout(timeoutId)
+      if (abortRef.current === controller) {
+        abortRef.current = null
+        setLoading(false)
+      }
+    }
+  }, [])
+
+  useEffect(() => () => abortRef.current?.abort(), [])
+
+  return { data, loading, error, submit, reset }
+}
 
 export function useMakerRecommendation() {
   const [data, setData] = useState(null)

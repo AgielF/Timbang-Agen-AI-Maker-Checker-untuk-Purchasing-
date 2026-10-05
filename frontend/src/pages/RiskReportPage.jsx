@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import WorkbenchTemplate from '../components/templates/WorkbenchTemplate';
 import NavBar from '../components/organisms/NavBar';
 import FindingList from '../components/organisms/FindingList';
@@ -100,21 +100,31 @@ function StatusBadge({ status }) {
 
 export default function RiskReportPage() {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const txId = searchParams.get('tx') ?? SAMPLE_TRANSACTION_ID;
   const { data, error, loading, run } = useRiskReport();
+  const uploadedReport = location.state?.reportData ?? null;
+  const reportDocs = location.state?.docs ?? SAMPLE_DOCS;
+  const reportHasL2 = location.state?.hasL2 ?? false;
+  const reportHasDocs = location.state?.hasDocs ?? true;
 
   const doRun = useCallback(() => {
-    run(txId, SAMPLE_DOCS).catch(() => {});
-  }, [run, txId]);
+    run(txId, {
+      ...reportDocs,
+      has_level2_approval: reportHasL2,
+      has_complete_docs: reportHasDocs,
+    }).catch(() => {});
+  }, [reportDocs, reportHasDocs, reportHasL2, run, txId]);
 
   // Auto-run on mount + when txId changes
   useEffect(() => {
-    doRun();
-  }, [doRun]);
+    if (!uploadedReport) doRun();
+  }, [doRun, uploadedReport]);
 
-  const findings   = (data?.findings ?? []).map(mapFinding);
-  const breakdown  = deriveBreakdown(data?.findings);
-  const reportTime = data?.findings?.[0]?.created_at ?? '';
+  const report = uploadedReport ?? data;
+  const findings   = (report?.findings ?? []).map(mapFinding);
+  const breakdown  = deriveBreakdown(report?.findings);
+  const reportTime = report?.findings?.[0]?.created_at ?? '';
 
   return (
     <WorkbenchTemplate
@@ -127,11 +137,11 @@ export default function RiskReportPage() {
             </h2>
             <p className="text-sm text-[var(--color-text-inv-mute)]">
               Transaction: <span className="font-mono">{txId}</span>
-              {data && <><span className="mx-2">·</span>{fmtTs(reportTime)}</>}
+              {report && <><span className="mx-2">·</span>{fmtTs(reportTime)}</>}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0 mt-1">
-            {data && <StatusBadge status={data.overall_status} />}
+            {report && <StatusBadge status={report.overall_status} />}
           </div>
         </div>
       }
@@ -152,18 +162,18 @@ export default function RiskReportPage() {
               </Button>
             </div>
           </div>
-        ) : data ? (
+        ) : report ? (
           <div className="flex flex-col gap-6">
             {/* Row 1: Gauge + Breakdown */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <RiskGauge severity={data.severity} />
+              <RiskGauge severity={report.severity} />
               <SeverityBreakdown counts={breakdown} />
             </div>
 
             {/* Row 2: Summary */}
-            {data.recommendation && (
+            {report.recommendation && (
               <div className="border border-amber/30 bg-amber/10 px-5 py-4">
-                <p className="text-sm font-semibold text-amber">{data.recommendation}</p>
+                <p className="text-sm font-semibold text-amber">{report.recommendation}</p>
               </div>
             )}
 

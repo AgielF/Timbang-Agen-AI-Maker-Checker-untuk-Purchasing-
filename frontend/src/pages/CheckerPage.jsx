@@ -4,26 +4,51 @@ import WorkbenchTemplate from '../components/templates/WorkbenchTemplate';
 import NavBar from '../components/organisms/NavBar';
 import PageHeader from '../components/organisms/PageHeader';
 import MatchGrid from '../components/organisms/MatchGrid';
+import CheckerInputForm from '../components/organisms/CheckerInputForm';
+import CheckerUploadPanel from '../components/organisms/CheckerUploadPanel';
+import TabSwitch from '../components/molecules/TabSwitch';
 import Button from '../components/atoms/Button';
 import Icon from '../components/atoms/Icon';
-import { useMatchThreeWay } from '../hooks/useApi';
+import { useMatchThreeWay, useRiskReportFromFiles } from '../hooks/useApi';
 import { SAMPLE_TRANSACTION_ID, SAMPLE_DOCS } from '../lib/constants';
 
-const fmtIDR = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 });
+const formatMoney = (amount, currency = 'IDR') => new Intl.NumberFormat('id-ID', {
+  style: 'currency',
+  currency,
+  maximumFractionDigits: 0,
+}).format(amount);
 
-// PO/GR/Invoice shapes for MatchGrid display (keys match what organism renders)
-const DISPLAY_PO      = { reference: SAMPLE_DOCS.po.reference,      quantity: SAMPLE_DOCS.po.quantity,      amount: SAMPLE_DOCS.po.amount,      currency: SAMPLE_DOCS.po.currency, npwp_vendor: SAMPLE_DOCS.po.npwp_vendor };
-const DISPLAY_GR      = { reference: SAMPLE_DOCS.gr.reference,      quantity: SAMPLE_DOCS.gr.quantity,      amount: SAMPLE_DOCS.gr.amount,      currency: SAMPLE_DOCS.gr.currency };
-const DISPLAY_INVOICE = {
-  reference: SAMPLE_DOCS.invoice.reference,
-  quantity: SAMPLE_DOCS.invoice.quantity,
-  amount: SAMPLE_DOCS.invoice.amount,
-  currency: SAMPLE_DOCS.invoice.currency,
-  tax_invoice_ref: SAMPLE_DOCS.invoice.tax_invoice_ref,
-  dpp_amount: SAMPLE_DOCS.invoice.dpp_amount,
-  ppn_amount: SAMPLE_DOCS.invoice.ppn_amount,
-  npwp_vendor: SAMPLE_DOCS.invoice.npwp_vendor,
-};
+function cloneSampleDocs() {
+  return {
+    po: { ...SAMPLE_DOCS.po },
+    gr: { ...SAMPLE_DOCS.gr },
+    invoice: { ...SAMPLE_DOCS.invoice },
+  };
+}
+
+function normalizeDocument(document) {
+  const normalized = {
+    ...document,
+    quantity: Number(document.quantity || 0),
+    amount: Number(document.amount || 0),
+  };
+
+  for (const field of ['dpp_amount', 'ppn_amount']) {
+    normalized[field] = document[field] === '' || document[field] == null
+      ? null
+      : Number(document[field]);
+  }
+
+  return normalized;
+}
+
+function normalizeDocs(docs) {
+  return {
+    po: normalizeDocument(docs.po),
+    gr: normalizeDocument(docs.gr),
+    invoice: normalizeDocument(docs.invoice),
+  };
+}
 
 function VerdictBanner({ matched, discrepancies }) {
   if (matched) {
@@ -51,7 +76,8 @@ function VerdictBanner({ matched, discrepancies }) {
   );
 }
 
-function DeltaTable({ po, invoice }) {
+function DeltaTable({ po, gr, invoice }) {
+  const currency = po?.currency ?? 'IDR';
   const delta = po != null && invoice != null ? invoice - po : null;
   return (
     <div className="border border-[var(--border-dark)] overflow-hidden">
@@ -66,10 +92,10 @@ function DeltaTable({ po, invoice }) {
         <tbody>
           <tr className="border-b border-[var(--border-dark)] last:border-0 bg-amber/5">
             <td className="px-4 py-2 font-medium text-amber uppercase text-xs tracking-wider">DPP</td>
-            <td className="px-4 py-2 text-right font-mono tabular-nums text-[var(--color-text-inv)]">{po != null ? fmtIDR.format(po) : '—'}</td>
-            <td className="px-4 py-2 text-right font-mono tabular-nums text-[var(--color-text-inv-mute)]">{fmtIDR.format(SAMPLE_DOCS.gr.amount)}</td>
-            <td className="px-4 py-2 text-right font-mono tabular-nums text-amber">{invoice != null ? fmtIDR.format(invoice) : '—'}</td>
-            <td className="px-4 py-2 text-right font-mono tabular-nums text-sev-high">{delta != null ? (delta >= 0 ? '+' : '') + fmtIDR.format(delta) : '—'}</td>
+            <td className="px-4 py-2 text-right font-mono tabular-nums text-[var(--color-text-inv)]">{po != null ? formatMoney(po, currency) : '—'}</td>
+            <td className="px-4 py-2 text-right font-mono tabular-nums text-[var(--color-text-inv-mute)]">{gr != null ? formatMoney(gr, currency) : '—'}</td>
+            <td className="px-4 py-2 text-right font-mono tabular-nums text-amber">{invoice != null ? formatMoney(invoice, currency) : '—'}</td>
+            <td className="px-4 py-2 text-right font-mono tabular-nums text-sev-high">{delta != null ? (delta >= 0 ? '+' : '') + formatMoney(delta, currency) : '—'}</td>
           </tr>
         </tbody>
       </table>
@@ -79,38 +105,129 @@ function DeltaTable({ po, invoice }) {
 
 export default function CheckerPage() {
   const [txId, setTxId] = useState(SAMPLE_TRANSACTION_ID);
+  const [activeTab, setActiveTab] = useState('upload');
+  const [docs, setDocs] = useState(cloneSampleDocs);
+  const [hasL2, setHasL2] = useState(false);
+  const [hasDocs, setHasDocs] = useState(true);
   const navigate = useNavigate();
-  const { data, error, loading, run } = useMatchThreeWay();
+  const {
+    data,
+    error,
+    loading: matchLoading,
+    run,
+    reset: resetMatch,
+  } = useMatchThreeWay();
+  const {
+    loading: uploadLoading,
+    error: uploadError,
+    submit: submitFiles,
+    reset: resetUpload,
+  } = useRiskReportFromFiles();
+  const loading = matchLoading || uploadLoading;
 
   const handleRun = useCallback(() => {
-    run(txId.trim() || SAMPLE_TRANSACTION_ID, SAMPLE_DOCS).catch(() => {});
-  }, [run, txId]);
+    run(txId.trim() || SAMPLE_TRANSACTION_ID, normalizeDocs(docs)).catch(() => {});
+  }, [docs, run, txId]);
+
+  const resetSamples = useCallback(() => {
+    setDocs(cloneSampleDocs());
+    setHasL2(false);
+    setHasDocs(true);
+  }, []);
+
+  const handleTabChange = useCallback((nextTab) => {
+    setActiveTab(nextTab);
+    resetMatch();
+    resetUpload();
+  }, [resetMatch, resetUpload]);
+
+  const handleUploadSubmit = useCallback(async (files, options) => {
+    try {
+      const report = await submitFiles(
+        txId.trim() || SAMPLE_TRANSACTION_ID,
+        files,
+        options,
+      );
+      if (report) {
+        navigate(
+          `/checker/risk-report?tx=${encodeURIComponent(txId.trim() || SAMPLE_TRANSACTION_ID)}`,
+          { state: { reportData: report } },
+        );
+      }
+    } catch {
+      // The upload hook stores and exposes the error for the panel.
+    }
+  }, [navigate, submitFiles, txId]);
 
   const activeTx = txId.trim() || SAMPLE_TRANSACTION_ID;
+  const displayedDocs = {
+    po: docs.po,
+    gr: docs.gr,
+    invoice: docs.invoice,
+  };
+  const differences = (data?.discrepancies ?? []).map((discrepancy) => {
+    if (/quantity/i.test(discrepancy)) return 'quantity';
+    if (/dpp/i.test(discrepancy)) return 'dpp_amount';
+    if (/amount/i.test(discrepancy)) return 'amount';
+    return null;
+  }).filter(Boolean);
 
   return (
     <WorkbenchTemplate
       navbar={<NavBar activePath="/checker" />}
       header={<PageHeader title="Checker Agent" />}
       inputZone={
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={txId}
-            onChange={(e) => setTxId(e.target.value)}
-            placeholder="Masukkan transaction ID…"
-            className="flex-1 bg-surface border border-[var(--border-dark)] text-[var(--color-text-inv)] placeholder:text-[var(--color-text-inv-mute)] px-4 py-2 text-sm rounded-md focus:outline-none focus:ring-2 focus:ring-electric/50"
+        <div className="flex flex-col gap-4">
+          <label className="flex flex-col gap-1 text-sm font-medium text-[var(--color-text-inv-mute)]">
+            Transaction ID
+            <input
+              type="text"
+              value={txId}
+              onChange={(e) => setTxId(e.target.value)}
+              placeholder="Masukkan transaction ID…"
+              className="w-full rounded-md border border-[var(--border-dark)] bg-surface px-4 py-2 text-sm text-ink placeholder:text-[var(--color-text-mute)] focus:outline-none focus:ring-2 focus:ring-electric/50"
+            />
+          </label>
+          <TabSwitch
+            tabs={[
+              { id: 'upload', label: 'Upload PDF' },
+              { id: 'manual', label: 'Input Manual' },
+            ]}
+            activeId={activeTab}
+            onChange={handleTabChange}
           />
-          <Button variant="primary" size="md" onClick={handleRun} loading={loading}>
-            Run Three-Way Match
-          </Button>
+          <div
+            id={`checker-panel-${activeTab}`}
+            role="tabpanel"
+            aria-labelledby={`checker-tab-${activeTab}`}
+          >
+            {activeTab === 'upload' ? (
+              <CheckerUploadPanel
+                onSubmit={handleUploadSubmit}
+                loading={uploadLoading}
+                error={uploadError}
+              />
+            ) : (
+              <CheckerInputForm
+                value={docs}
+                onChange={setDocs}
+                onSubmit={handleRun}
+                loading={matchLoading}
+                hasL2={hasL2}
+                hasDocs={hasDocs}
+                onHasL2Change={setHasL2}
+                onHasDocsChange={setHasDocs}
+                onReset={resetSamples}
+              />
+            )}
+          </div>
         </div>
       }
       resultZone={
         loading ? (
           <div className="flex items-center justify-center gap-3 py-12 text-[var(--color-text-inv-mute)]">
             <span className="inline-block w-5 h-5 rounded-full border-2 border-electric border-r-transparent animate-spin" />
-            <span className="text-sm">Menjalankan three-way match…</span>
+            <span className="text-sm">Menjalankan checker…</span>
           </div>
         ) : error ? (
           <div className="flex items-start gap-3 border border-sev-critical/30 bg-sev-critical/5 px-4 py-4">
@@ -126,18 +243,25 @@ export default function CheckerPage() {
           <div className="flex flex-col gap-4">
             <VerdictBanner matched={data.matched} discrepancies={data.discrepancies} />
             <MatchGrid
-              po={DISPLAY_PO}
-              gr={DISPLAY_GR}
-              invoice={DISPLAY_INVOICE}
-              differences={data.matched ? [] : ['amount', 'quantity']}
+              po={displayedDocs.po}
+              gr={displayedDocs.gr}
+              invoice={displayedDocs.invoice}
+              differences={data.matched ? [] : differences}
               status={data.matched ? 'matched' : 'discrepancy'}
             />
-            <DeltaTable po={SAMPLE_DOCS.po.amount} invoice={SAMPLE_DOCS.invoice.dpp_amount ?? SAMPLE_DOCS.invoice.amount} />
+            <DeltaTable
+              po={docs.po.amount}
+              gr={docs.gr.amount}
+              invoice={docs.invoice.dpp_amount || docs.invoice.amount}
+            />
             <div className="flex justify-end pt-2">
               <Button
                 variant="primary"
                 size="lg"
-                onClick={() => navigate(`/checker/risk-report?tx=${encodeURIComponent(activeTx)}`)}
+                onClick={() => navigate(
+                  `/checker/risk-report?tx=${encodeURIComponent(activeTx)}`,
+                  { state: { docs: normalizeDocs(docs), hasL2, hasDocs } },
+                )}
               >
                 Generate Risk Report
               </Button>
