@@ -28,6 +28,21 @@ log = structlog.get_logger(__name__)
 _SOP_L2_APPROVAL_THRESHOLD = Decimal("100_000_000")  # 100 juta IDR → level 2 approval required
 
 
+def _citation_guard(findings: list[dict]) -> list[dict]:
+    """Drop findings that have neither a source document nor an SOP citation."""
+    valid: list[dict] = []
+    for finding in findings:
+        has_evidence = bool(finding.get("evidence_url")) or bool(finding.get("sop_clause_citation"))
+        if has_evidence:
+            valid.append(finding)
+        else:
+            log.warning(
+                f"Citation guard: dropped finding without evidence: "
+                f"{finding.get('description', '?')[:80]}"
+            )
+    return valid
+
+
 class AuditService:
     """Business logic for the Checker Agent audit context."""
 
@@ -163,6 +178,7 @@ class AuditService:
         overall_status = "PASS"
         severity = "LOW"
         recommendations: list[str] = []
+        pending_findings: list[dict] = []
 
         # 1. Three-way matching (only if all three documents provided)
         if po_data and gr_data and invoice_data:
@@ -178,13 +194,23 @@ class AuditService:
                         amount=po_data.amount,
                         description=disc,
                         sop_reference="THREE_WAY_MATCH",
+                        evidence_url=f"po:{po_data.reference}" if po_data.reference else None,
+                        sop_clause_citation=(
+                            "SOP-01: Three-way match tolerance ±2% qty, ±1% amount"
+                        ),
+                        evidence_type="DISCREPANCY",
                     )
-                    finding = await self._finding_repo.create(finding_data)
-                    await self._check_repo.create(
-                        CheckResultCreate(finding_id=finding.id, status="FAIL", notes=disc)
+                    pending_findings.append(
+                        {
+                            "description": disc,
+                            "evidence_url": finding_data.evidence_url,
+                            "sop_clause_citation": finding_data.sop_clause_citation,
+                            "finding_data": finding_data,
+                            "check_status": "FAIL",
+                            "check_notes": disc,
+                            "recommendation": f"Resolve discrepancy: {disc}",
+                        }
                     )
-                    findings.append(AuditFindingRead.model_validate(finding))
-                    recommendations.append(f"Resolve discrepancy: {disc}")
 
         # 2. SOP validation
         amount = po_data.amount if po_data else Decimal("0")
@@ -200,6 +226,11 @@ class AuditService:
                 overall_status = "WARN"
                 severity = "MEDIUM"
             for violation in sop_result.violations:
+                sop_citation = (
+                    "SOP: Transactions above IDR 100,000,000 require level-2 approval"
+                    if "level-2 approval" in violation
+                    else "SOP: All supporting procurement documents must be complete"
+                )
                 finding_data = AuditFindingCreate(
                     transaction_id=transaction_id,
                     po_number=po_data.reference if po_data else "",
@@ -207,13 +238,33 @@ class AuditService:
                     amount=amount,
                     description=violation,
                     sop_reference="SOP_VALIDATION",
+                    sop_clause_citation=sop_citation,
+                    evidence_type="SOP_THRESHOLD",
                 )
-                finding = await self._finding_repo.create(finding_data)
-                await self._check_repo.create(
-                    CheckResultCreate(finding_id=finding.id, status="WARN", notes=violation)
+                pending_findings.append(
+                    {
+                        "description": violation,
+                        "evidence_url": finding_data.evidence_url,
+                        "sop_clause_citation": finding_data.sop_clause_citation,
+                        "finding_data": finding_data,
+                        "check_status": "WARN",
+                        "check_notes": violation,
+                        "recommendation": f"SOP violation: {violation}",
+                    }
                 )
-                findings.append(AuditFindingRead.model_validate(finding))
-                recommendations.append(f"SOP violation: {violation}")
+
+        # Citation Guard runs before any finding or check result is persisted.
+        for candidate in _citation_guard(pending_findings):
+            finding = await self._finding_repo.create(candidate["finding_data"])
+            await self._check_repo.create(
+                CheckResultCreate(
+                    finding_id=finding.id,
+                    status=candidate["check_status"],
+                    notes=candidate["check_notes"],
+                )
+            )
+            findings.append(AuditFindingRead.model_validate(finding))
+            recommendations.append(candidate["recommendation"])
 
         log.info(
             "risk_report_generated",

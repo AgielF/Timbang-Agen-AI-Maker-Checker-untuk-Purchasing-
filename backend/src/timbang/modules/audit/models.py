@@ -27,6 +27,9 @@ class AuditFinding(Base):
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="IDR")
     description: Mapped[str] = mapped_column(String(2048), nullable=False)
     sop_reference: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    evidence_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    sop_clause_citation: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    evidence_type: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

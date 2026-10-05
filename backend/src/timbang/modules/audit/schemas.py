@@ -19,6 +19,9 @@ class AuditFindingCreate(BaseModel):
     currency: str = "IDR"
     description: str
     sop_reference: str | None = None
+    evidence_url: str | None = None
+    sop_clause_citation: str | None = None
+    evidence_type: str = ""
 
 
 class AuditFindingRead(BaseModel):
@@ -32,6 +35,9 @@ class AuditFindingRead(BaseModel):
     currency: str
     description: str
     sop_reference: str | None
+    evidence_url: str | None = None
+    sop_clause_citation: str | None = None
+    evidence_type: str = ""
     created_at: datetime
 
 

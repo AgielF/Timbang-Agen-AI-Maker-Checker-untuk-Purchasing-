@@ -8,7 +8,7 @@ import pytest
 
 from timbang.modules.audit.repository import AuditFindingRepository, CheckResultRepository
 from timbang.modules.audit.schemas import DocumentData
-from timbang.modules.audit.service import AuditService
+from timbang.modules.audit.service import AuditService, _citation_guard
 
 
 def _make_service(session) -> AuditService:
@@ -20,6 +20,36 @@ def _make_service(session) -> AuditService:
 
 def _doc(qty: str, amount: str, ref: str = "REF-001") -> DocumentData:
     return DocumentData(quantity=Decimal(qty), amount=Decimal(amount), reference=ref)
+
+
+def test_citation_guard_drops_finding_without_evidence():
+    finding = {
+        "description": "Invoice amount exceeds PO amount",
+        "evidence_url": None,
+        "sop_clause_citation": None,
+    }
+
+    assert _citation_guard([finding]) == []
+
+
+def test_citation_guard_keeps_finding_with_evidence_url():
+    finding = {
+        "description": "Invoice amount exceeds PO amount",
+        "evidence_url": "po:PO-2026-001",
+        "sop_clause_citation": None,
+    }
+
+    assert _citation_guard([finding]) == [finding]
+
+
+def test_citation_guard_keeps_finding_with_sop_citation():
+    finding = {
+        "description": "Transaction exceeds approval threshold",
+        "evidence_url": None,
+        "sop_clause_citation": "SOP-02: Level-2 approval threshold",
+    }
+
+    assert _citation_guard([finding]) == [finding]
 
 
 # ── three_way_matching ────────────────────────────────────────────────────────
@@ -126,9 +156,12 @@ async def test_generate_risk_report_persists_findings(session):
     assert report.transaction_id == "TXN-001"
     assert report.overall_status == "FAIL"
     assert len(report.findings) >= 1
+    assert all(f.evidence_url or f.sop_clause_citation for f in report.findings)
+    assert all(f.evidence_type for f in report.findings)
     # Findings must be persisted — verify via repository
     findings = await svc._finding_repo.list_by_transaction("TXN-001")
     assert len(findings) >= 1
+    assert all(f.evidence_url or f.sop_clause_citation for f in findings)
 
 
 @pytest.mark.asyncio

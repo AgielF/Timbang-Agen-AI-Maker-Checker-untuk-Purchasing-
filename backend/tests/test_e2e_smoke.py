@@ -245,3 +245,8 @@ async def test_risk_report_creates_finding(client):
     # SOP violation must be found (amount > 100jt, no L2 approval)
     assert result["overall_status"] in ("FAIL", "WARN")
     assert len(result["findings"]) >= 1
+    assert all(
+        finding.get("evidence_url") or finding.get("sop_clause_citation")
+        for finding in result["findings"]
+    )
+    assert all(finding.get("evidence_type") for finding in result["findings"])
