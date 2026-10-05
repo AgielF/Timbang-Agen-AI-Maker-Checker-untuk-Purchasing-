@@ -65,3 +65,7 @@ Thumbs.db
 
 # ── Large binary / docs (bloat repo) ─────────────────────────────────────────
 *.pdf
+
+# DB backups
+demo.db.backup-*
+*.db.backup-*
