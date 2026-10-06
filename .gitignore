@@ -17,7 +17,6 @@ mcp.json
 
 # ── Langflow state & exports (rawan credential) ──────────────────────────────
 .langflow/
-langflow/maker_agent.json
 
 # ── Python artefacts ─────────────────────────────────────────────────────────
 __pycache__/
