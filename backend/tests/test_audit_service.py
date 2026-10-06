@@ -713,7 +713,7 @@ async def test_get_risk_report_from_files_happy_path(session, monkeypatch):
     assert report.findings == []
     assert mapped_invoice_data["invoice"].tax_invoice_ref == "010.000-26.00000001"
     findings = await svc._finding_repo.list_by_transaction("TXN-PDF-HAPPY")
-    assert all(finding.evidence_type == "PO_HISTORY" for finding in findings)
+    assert all(finding.evidence_type in ("PO_HISTORY", "INVOICE_HISTORY") for finding in findings)
     assert len(call_log) == 5  # 4 uploads + 1 extraction call
     run_calls = [call for call in call_log if "/api/v1/run/" in call["url"]]
     assert len(run_calls) == 1
@@ -843,6 +843,50 @@ _SPLIT_VENDOR = "123456789012345"
 _SPLIT_OTHER_VENDOR = "987654321098765"
 _SPLIT_PO_AMOUNT = Decimal("95000000")
 
+# ── detect_duplicate_invoice ────────────────────────────────────────────────────
+_DUP_VENDOR = "111222333444555"
+_DUP_OTHER_VENDOR = "555444333222111"
+_DUP_INVOICE_AMOUNT = Decimal("50000000")
+_DUP_INVOICE_REF = "INV-DUP-001"
+
+
+async def _seed_invoice_history(
+    session,
+    *,
+    invoice_ref: str,
+    amount: Decimal,
+    vendor_reference: str,
+    transaction_id: str,
+) -> None:
+    repo = AuditFindingRepository(session)
+    await repo.create(
+        AuditFindingCreate(
+            transaction_id=transaction_id,
+            po_number=invoice_ref,
+            severity="LOW",
+            amount=amount,
+            description=f"Invoice history {invoice_ref}",
+            sop_reference="INVOICE_HISTORY",
+            evidence_url=f"invoice:{invoice_ref}",
+            sop_clause_citation="SOP-06: Setiap invoice harus unik per transaksi — tidak boleh duplikat reference atau nominal",
+            evidence_type="INVOICE_HISTORY",
+            vendor_reference=vendor_reference,
+        )
+    )
+
+
+def _dup_invoice_doc(
+    invoice_ref: str = _DUP_INVOICE_REF,
+    vendor_reference: str = _DUP_VENDOR,
+    amount: Decimal = _DUP_INVOICE_AMOUNT,
+) -> DocumentData:
+    return DocumentData(
+        quantity=Decimal("10"),
+        amount=amount,
+        reference=invoice_ref,
+        npwp_vendor=vendor_reference,
+    )
+
 
 async def _seed_po_history(
     session,
@@ -943,6 +987,107 @@ async def test_detect_split_po_different_vendor(session):
 
     current_po = _split_po_doc("PO-VENDOR-A-001", vendor_reference=_SPLIT_VENDOR)
     findings = await svc.detect_split_po(current_po, _SPLIT_VENDOR)
+
+    assert findings == []
+
+
+# ── detect_duplicate_invoice ────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_detect_duplicate_invoice_same_reference(session):
+    """Same invoice reference from same vendor → CRITICAL finding."""
+    svc = _make_service(session)
+    await _seed_invoice_history(
+        session,
+        invoice_ref="INV-DUP-001",
+        amount=_DUP_INVOICE_AMOUNT,
+        vendor_reference=_DUP_VENDOR,
+        transaction_id="TXN-DUP-001",
+    )
+
+    current_invoice = _dup_invoice_doc(invoice_ref="INV-DUP-001")
+    findings = await svc.detect_duplicate_invoice(current_invoice, _DUP_VENDOR, transaction_id="TXN-DUP-002")
+
+    assert len(findings) == 1
+    finding_data = findings[0]["finding_data"]
+    assert finding_data.indication_label == FraudIndication.DUPLICATE_INVOICE
+    assert finding_data.severity == "CRITICAL"
+    assert finding_data.evidence_type == "DUPLICATE_INVOICE"
+    assert finding_data.sop_clause_citation.startswith("SOP-06:")
+    assert findings[0]["evidence_url"] == "invoice:INV-DUP-001"
+    assert "reference sama persis" in finding_data.description
+    assert _DUP_VENDOR in finding_data.description
+
+
+@pytest.mark.asyncio
+async def test_detect_duplicate_invoice_same_amount_recent(session):
+    """Same amount + same vendor + within 3 days → HIGH finding."""
+    svc = _make_service(session)
+    await _seed_invoice_history(
+        session,
+        invoice_ref="INV-DUP-002",
+        amount=_DUP_INVOICE_AMOUNT,
+        vendor_reference=_DUP_VENDOR,
+        transaction_id="TXN-DUP-003",
+    )
+
+    current_invoice = _dup_invoice_doc(invoice_ref="INV-DUP-003")
+    findings = await svc.detect_duplicate_invoice(current_invoice, _DUP_VENDOR, transaction_id="TXN-DUP-004")
+
+    assert len(findings) == 1
+    finding_data = findings[0]["finding_data"]
+    assert finding_data.indication_label == FraudIndication.DUPLICATE_INVOICE
+    assert finding_data.severity == "HIGH"
+    assert finding_data.evidence_type == "DUPLICATE_INVOICE"
+    assert finding_data.sop_clause_citation.startswith("SOP-06:")
+    assert "amount Rp 50,000,000 sama" in finding_data.description
+    assert _DUP_VENDOR in finding_data.description
+
+
+@pytest.mark.asyncio
+async def test_detect_duplicate_invoice_different_vendor(session):
+    """Invoice from another vendor does not trigger duplicate detection."""
+    svc = _make_service(session)
+    await _seed_invoice_history(
+        session,
+        invoice_ref="INV-DUP-001",
+        amount=_DUP_INVOICE_AMOUNT,
+        vendor_reference=_DUP_OTHER_VENDOR,
+        transaction_id="TXN-DUP-005",
+    )
+
+    current_invoice = _dup_invoice_doc(invoice_ref="INV-DUP-001", vendor_reference=_DUP_VENDOR)
+    findings = await svc.detect_duplicate_invoice(current_invoice, _DUP_VENDOR)
+
+    assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_detect_duplicate_invoice_no_history(session):
+    """No invoice history → no findings."""
+    svc = _make_service(session)
+    current_invoice = _dup_invoice_doc()
+
+    findings = await svc.detect_duplicate_invoice(current_invoice, _DUP_VENDOR)
+
+    assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_detect_duplicate_invoice_different_amount(session):
+    """Different amount → no finding even with same vendor."""
+    svc = _make_service(session)
+    await _seed_invoice_history(
+        session,
+        invoice_ref="INV-DUP-010",
+        amount=Decimal("100000000"),  # Different amount
+        vendor_reference=_DUP_VENDOR,
+        transaction_id="TXN-DUP-006",
+    )
+
+    current_invoice = _dup_invoice_doc(invoice_ref="INV-DUP-011", amount=_DUP_INVOICE_AMOUNT)
+    findings = await svc.detect_duplicate_invoice(current_invoice, _DUP_VENDOR)
 
     assert findings == []
 

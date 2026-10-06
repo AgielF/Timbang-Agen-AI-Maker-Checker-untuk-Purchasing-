@@ -57,6 +57,25 @@ class AuditFindingRepository:
         result = await self._session.execute(query)
         return list(result.scalars().all())
 
+    async def list_recent_invoices_by_vendor(
+        self,
+        vendor_reference: str,
+        since: datetime,
+        exclude_invoice_ref: str = "",
+    ) -> list[AuditFinding]:
+        """Return recent invoice findings for a vendor, used for duplicate invoice detection."""
+        if not vendor_reference:
+            return []
+        query = select(AuditFinding).where(
+            AuditFinding.vendor_reference == vendor_reference,
+            AuditFinding.created_at >= since,
+            AuditFinding.evidence_type == "INVOICE_HISTORY",
+        )
+        if exclude_invoice_ref:
+            query = query.where(AuditFinding.po_number != exclude_invoice_ref)
+        result = await self._session.execute(query)
+        return list(result.scalars().all())
+
 
 class CheckResultRepository:
     """Data access layer for CheckResult entities."""

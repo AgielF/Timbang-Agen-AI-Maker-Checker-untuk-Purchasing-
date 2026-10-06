@@ -43,6 +43,11 @@ log = structlog.get_logger(__name__)
 _SOP_L2_APPROVAL_THRESHOLD = Decimal("100_000_000")  # 100 juta IDR → level 2 approval required
 _SPLIT_PO_WINDOW_DAYS = 7
 _SOP_05_SPLIT_PO = "SOP-05: Transaksi tidak boleh dipecah untuk hindari batas approval"
+_DUPLICATE_INVOICE_WINDOW_DAYS = 3
+_SOP_06_DUPLICATE_INVOICE = (
+    "SOP-06: Setiap invoice harus unik per transaksi — "
+    "tidak boleh duplikat reference atau nominal"
+)
 _MAX_PDF_SIZE_MB = 10
 _MARKDOWN_FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)\s*```", re.DOTALL)
 
@@ -743,6 +748,140 @@ class AuditService:
             )
         ]
 
+    async def detect_duplicate_invoice(
+        self,
+        current_invoice: DocumentData,
+        vendor_reference: str,
+        transaction_id: str = "",
+    ) -> list[dict]:
+        """Deteksi duplicate invoice via history query di audit_findings.
+
+        Filter: vendor_reference sama.
+        Cek: reference sama persis, ATAU amount sama + dalam 3 hari.
+        Return list of findings (dict).
+        """
+        vendor = (vendor_reference or current_invoice.npwp_vendor or "").strip()
+        if not vendor:
+            return []
+        if current_invoice.currency and current_invoice.currency != "IDR":
+            return []
+        if current_invoice.amount <= 0:
+            return []
+
+        since = datetime.now(UTC) - timedelta(days=_DUPLICATE_INVOICE_WINDOW_DAYS)
+        history = await self._finding_repo.list_recent_invoices_by_vendor(
+            vendor_reference=vendor,
+            since=since,
+            exclude_invoice_ref="",
+        )
+
+        current_ref = (current_invoice.reference or "").strip().upper()
+        current_amount = current_invoice.amount
+
+        for finding in history:
+            hist_ref = (finding.po_number or "").strip().upper()
+            hist_amount = Decimal(str(finding.amount))
+
+            if current_ref and hist_ref and current_ref == hist_ref:
+                return [
+                    self._duplicate_invoice_finding(
+                        current_invoice=current_invoice,
+                        vendor_reference=vendor,
+                        match_type="EXACT_REFERENCE",
+                        matched_ref=hist_ref,
+                        severity="CRITICAL",
+                        transaction_id=transaction_id,
+                    )
+                ]
+
+            if current_amount == hist_amount:
+                return [
+                    self._duplicate_invoice_finding(
+                        current_invoice=current_invoice,
+                        vendor_reference=vendor,
+                        match_type="SAME_AMOUNT_RECENT",
+                        matched_ref=hist_ref,
+                        severity="HIGH",
+                        transaction_id=transaction_id,
+                    )
+                ]
+
+        return []
+
+    def _duplicate_invoice_finding(
+        self,
+        *,
+        current_invoice: DocumentData,
+        vendor_reference: str,
+        match_type: str,
+        matched_ref: str,
+        severity: str,
+        transaction_id: str = "",
+    ) -> dict:
+        if match_type == "EXACT_REFERENCE":
+            description = (
+                f"Invoice {current_invoice.reference} duplikat terdeteksi — "
+                f"reference sama persis dengan invoice {matched_ref} dari vendor {vendor_reference}"
+            )
+        else:
+            description = (
+                f"Invoice {current_invoice.reference} duplikat terdeteksi — "
+                f"amount Rp {current_invoice.amount:,.0f} sama dengan invoice {matched_ref} "
+                f"dari vendor {vendor_reference} dalam {_DUPLICATE_INVOICE_WINDOW_DAYS} hari"
+            )
+        evidence_url = f"invoice:{current_invoice.reference}" if current_invoice.reference else None
+        finding_data = AuditFindingCreate(
+            transaction_id=transaction_id,
+            po_number=current_invoice.reference,
+            severity=severity,
+            amount=current_invoice.amount,
+            currency=current_invoice.currency or "IDR",
+            description=description,
+            sop_reference="SOP-06",
+            evidence_url=evidence_url,
+            sop_clause_citation=_SOP_06_DUPLICATE_INVOICE,
+            evidence_type="DUPLICATE_INVOICE",
+            indication_label=FraudIndication.DUPLICATE_INVOICE,
+            vendor_reference=vendor_reference,
+        )
+        return {
+            "description": description,
+            "evidence_url": finding_data.evidence_url,
+            "sop_clause_citation": finding_data.sop_clause_citation,
+            "finding_data": finding_data,
+            "check_status": "FAIL",
+            "check_notes": description,
+            "recommendation": f"Investigate duplicate invoice: {description}",
+        }
+
+    async def _record_invoice_history(
+        self,
+        transaction_id: str,
+        invoice_data: DocumentData,
+        vendor_reference: str,
+    ) -> None:
+        """Persist processed invoice so later checks can detect duplicate patterns."""
+        if not invoice_data.reference and not vendor_reference:
+            return
+        await self._finding_repo.create(
+            AuditFindingCreate(
+                transaction_id=transaction_id,
+                po_number=invoice_data.reference,
+                severity="LOW",
+                amount=invoice_data.amount,
+                currency=invoice_data.currency or "IDR",
+                description=f"Invoice history {invoice_data.reference or transaction_id}",
+                sop_reference="INVOICE_HISTORY",
+                evidence_url=(
+                    f"invoice:{invoice_data.reference}" if invoice_data.reference else None
+                ),
+                sop_clause_citation=_SOP_06_DUPLICATE_INVOICE,
+                evidence_type="INVOICE_HISTORY",
+                indication_label=FraudIndication.UNKNOWN,
+                vendor_reference=vendor_reference,
+            )
+        )
+
     async def _record_po_history(
         self,
         transaction_id: str,
@@ -929,6 +1068,22 @@ class AuditService:
                 severity = "HIGH"
                 pending_findings.extend(split_findings)
 
+        # 5. Duplicate Invoice detection (same vendor, same reference or same amount within 3 days)
+        if invoice_data is not None:
+            vendor_reference = (invoice_data.npwp_vendor or "").strip()
+            duplicate_findings = await self.detect_duplicate_invoice(
+                invoice_data,
+                vendor_reference,
+                transaction_id=transaction_id,
+            )
+            if duplicate_findings:
+                overall_status = "FAIL"
+                has_critical = any(
+                    f["finding_data"].severity == "CRITICAL" for f in duplicate_findings
+                )
+                severity = "CRITICAL" if has_critical else "HIGH"
+                pending_findings.extend(duplicate_findings)
+
         # Citation Guard runs before any finding or check result is persisted.
         for candidate in _citation_guard(pending_findings):
             finding = await self._finding_repo.create(candidate["finding_data"])
@@ -947,6 +1102,13 @@ class AuditService:
                 transaction_id=transaction_id,
                 po_data=po_data,
                 vendor_reference=(po_data.npwp_vendor or "").strip(),
+            )
+
+        if invoice_data is not None:
+            await self._record_invoice_history(
+                transaction_id=transaction_id,
+                invoice_data=invoice_data,
+                vendor_reference=(invoice_data.npwp_vendor or "").strip(),
             )
 
         log.info(
