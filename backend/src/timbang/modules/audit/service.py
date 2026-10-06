@@ -11,6 +11,7 @@ import json
 import os
 import re
 import time
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import httpx
@@ -40,6 +41,8 @@ log = structlog.get_logger(__name__)
 
 # SOP thresholds
 _SOP_L2_APPROVAL_THRESHOLD = Decimal("100_000_000")  # 100 juta IDR → level 2 approval required
+_SPLIT_PO_WINDOW_DAYS = 7
+_SOP_05_SPLIT_PO = "SOP-05: Transaksi tidak boleh dipecah untuk hindari batas approval"
 _MAX_PDF_SIZE_MB = 10
 _MARKDOWN_FENCE_RE = re.compile(r"```(?:json)?\s*(.+?)\s*```", re.DOTALL)
 
@@ -626,8 +629,10 @@ class AuditService:
         """Rule-based SOP validation.
 
         Rules:
-        - Transactions > 100 juta IDR require level-2 approval.
+        - SOP-02: Transactions > 100 juta IDR require level-2 approval.
         - All documents must be complete.
+        - SOP-05: Transactions must not be split to avoid the approval threshold
+          (enforced separately by detect_split_po).
         """
         violations: list[str] = []
 
@@ -642,6 +647,127 @@ class AuditService:
             violations.append("Incomplete documentation — all supporting documents are required.")
 
         return SopValidationResult(passed=len(violations) == 0, violations=violations)
+
+    def _split_po_finding(
+        self,
+        *,
+        current_po: DocumentData,
+        vendor_reference: str,
+        po_count: int,
+        total_amount: Decimal,
+        transaction_id: str = "",
+    ) -> dict:
+        description = (
+            f"Terdeteksi {po_count} PO dari vendor {vendor_reference} "
+            f"dalam {_SPLIT_PO_WINDOW_DAYS} hari dengan total Rp {total_amount:,.0f} "
+            "melebihi threshold L2"
+        )
+        finding_data = AuditFindingCreate(
+            transaction_id=transaction_id,
+            po_number=current_po.reference,
+            severity="HIGH",
+            amount=total_amount,
+            currency=current_po.currency or "IDR",
+            description=description,
+            sop_reference="SOP-05",
+            evidence_url=f"po:{current_po.reference}" if current_po.reference else None,
+            sop_clause_citation=_SOP_05_SPLIT_PO,
+            evidence_type="SPLIT_PO",
+            indication_label=FraudIndication.SPLIT_PO,
+            vendor_reference=vendor_reference,
+        )
+        return {
+            "description": description,
+            "evidence_url": finding_data.evidence_url,
+            "sop_clause_citation": finding_data.sop_clause_citation,
+            "finding_data": finding_data,
+            "check_status": "FAIL",
+            "check_notes": description,
+            "recommendation": f"Investigate split PO pattern: {description}",
+        }
+
+    async def detect_split_po(
+        self,
+        current_po: DocumentData,
+        vendor_reference: str,
+        transaction_id: str = "",
+    ) -> list[dict]:
+        """Detect POs split below the L2 threshold to avoid executive approval.
+
+        Pattern: ≥2 POs in 7 days, same vendor, each amount < L2 threshold,
+        combined total > L2 threshold.
+        """
+        vendor = (vendor_reference or current_po.npwp_vendor or "").strip()
+        if not vendor:
+            return []
+        if current_po.currency and current_po.currency != "IDR":
+            return []
+        if current_po.amount <= 0 or current_po.amount >= _SOP_L2_APPROVAL_THRESHOLD:
+            return []
+
+        since = datetime.now(UTC) - timedelta(days=_SPLIT_PO_WINDOW_DAYS)
+        history = await self._finding_repo.list_recent_by_vendor(
+            vendor_reference=vendor,
+            since=since,
+            exclude_po_number=current_po.reference,
+        )
+
+        amounts_by_po: dict[str, Decimal] = {}
+        unnamed_index = 0
+        for finding in history:
+            amount = Decimal(str(finding.amount))
+            if amount <= 0 or amount >= _SOP_L2_APPROVAL_THRESHOLD:
+                continue
+            po_number = (finding.po_number or "").strip()
+            if not po_number:
+                unnamed_index += 1
+                po_number = f"_history_{unnamed_index}"
+            amounts_by_po[po_number] = amount
+
+        current_key = current_po.reference.strip() or "_current"
+        amounts_by_po[current_key] = current_po.amount
+        if len(amounts_by_po) < 2:
+            return []
+
+        total_amount = sum(amounts_by_po.values(), Decimal("0"))
+        if total_amount <= _SOP_L2_APPROVAL_THRESHOLD:
+            return []
+
+        return [
+            self._split_po_finding(
+                current_po=current_po,
+                vendor_reference=vendor,
+                po_count=len(amounts_by_po),
+                total_amount=total_amount,
+                transaction_id=transaction_id,
+            )
+        ]
+
+    async def _record_po_history(
+        self,
+        transaction_id: str,
+        po_data: DocumentData,
+        vendor_reference: str,
+    ) -> None:
+        """Persist processed PO so later checks can detect split patterns."""
+        if not po_data.reference and not vendor_reference:
+            return
+        await self._finding_repo.create(
+            AuditFindingCreate(
+                transaction_id=transaction_id,
+                po_number=po_data.reference,
+                severity="LOW",
+                amount=po_data.amount,
+                currency=po_data.currency or "IDR",
+                description=f"PO history {po_data.reference or transaction_id}",
+                sop_reference="PO_HISTORY",
+                evidence_url=f"po:{po_data.reference}" if po_data.reference else None,
+                sop_clause_citation=_SOP_05_SPLIT_PO,
+                evidence_type="PO_HISTORY",
+                indication_label=FraudIndication.UNKNOWN,
+                vendor_reference=vendor_reference,
+            )
+        )
 
     # ── Risk report ───────────────────────────────────────────────────────────
 
@@ -681,6 +807,7 @@ class AuditService:
                         ),
                         evidence_type="DISCREPANCY",
                         indication_label=_indication_for_discrepancy(disc),
+                        vendor_reference=(po_data.npwp_vendor or "").strip(),
                     )
                     pending_findings.append(
                         {
@@ -728,6 +855,7 @@ class AuditService:
                     sop_clause_citation=sop_citation,
                     evidence_type="SOP_THRESHOLD",
                     indication_label=_indication_for_sop_violation(violation),
+                    vendor_reference=(po_data.npwp_vendor or "").strip() if po_data else "",
                 )
                 pending_findings.append(
                     {
@@ -774,6 +902,7 @@ class AuditService:
                         if is_price_violation
                         else FraudIndication.INCOMPLETE_DOCS
                     ),
+                    vendor_reference=(po_data.npwp_vendor or "").strip(),
                 )
                 pending_findings.append(
                     {
@@ -787,6 +916,19 @@ class AuditService:
                     }
                 )
 
+        # 4. Split PO detection (same vendor, sub-threshold POs that sum above L2)
+        if po_data is not None:
+            vendor_reference = (po_data.npwp_vendor or "").strip()
+            split_findings = await self.detect_split_po(
+                po_data,
+                vendor_reference,
+                transaction_id=transaction_id,
+            )
+            if split_findings:
+                overall_status = "FAIL"
+                severity = "HIGH"
+                pending_findings.extend(split_findings)
+
         # Citation Guard runs before any finding or check result is persisted.
         for candidate in _citation_guard(pending_findings):
             finding = await self._finding_repo.create(candidate["finding_data"])
@@ -799,6 +941,13 @@ class AuditService:
             )
             findings.append(AuditFindingRead.model_validate(finding))
             recommendations.append(candidate["recommendation"])
+
+        if po_data is not None:
+            await self._record_po_history(
+                transaction_id=transaction_id,
+                po_data=po_data,
+                vendor_reference=(po_data.npwp_vendor or "").strip(),
+            )
 
         log.info(
             "risk_report_generated",

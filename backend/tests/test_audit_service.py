@@ -13,6 +13,7 @@ from fastapi import UploadFile
 
 from timbang.modules.audit.repository import AuditFindingRepository, CheckResultRepository
 from timbang.modules.audit.schemas import (
+    AuditFindingCreate,
     DocumentData,
     DocumentExtraction,
     FraudIndication,
@@ -712,7 +713,7 @@ async def test_get_risk_report_from_files_happy_path(session, monkeypatch):
     assert report.findings == []
     assert mapped_invoice_data["invoice"].tax_invoice_ref == "010.000-26.00000001"
     findings = await svc._finding_repo.list_by_transaction("TXN-PDF-HAPPY")
-    assert findings == []
+    assert all(finding.evidence_type == "PO_HISTORY" for finding in findings)
     assert len(call_log) == 5  # 4 uploads + 1 extraction call
     run_calls = [call for call in call_log if "/api/v1/run/" in call["url"]]
     assert len(run_calls) == 1
@@ -834,3 +835,114 @@ async def test_extract_all_documents_malformed_output_falls_back_to_raw_text(
     assert extraction.tax_invoice is None
     assert extraction.raw_text == "not valid structured extraction"
     assert len([call for call in call_log if "/api/v1/run/" in call["url"]]) == 1
+
+
+# ── detect_split_po ───────────────────────────────────────────────────────────
+
+_SPLIT_VENDOR = "123456789012345"
+_SPLIT_OTHER_VENDOR = "987654321098765"
+_SPLIT_PO_AMOUNT = Decimal("95000000")
+
+
+async def _seed_po_history(
+    session,
+    *,
+    po_number: str,
+    amount: Decimal,
+    vendor_reference: str,
+    transaction_id: str,
+) -> None:
+    repo = AuditFindingRepository(session)
+    await repo.create(
+        AuditFindingCreate(
+            transaction_id=transaction_id,
+            po_number=po_number,
+            severity="LOW",
+            amount=amount,
+            description=f"PO history {po_number}",
+            sop_reference="PO_HISTORY",
+            evidence_url=f"po:{po_number}",
+            sop_clause_citation="SOP-05: Transaksi tidak boleh dipecah untuk hindari batas approval",
+            evidence_type="PO_HISTORY",
+            vendor_reference=vendor_reference,
+        )
+    )
+
+
+def _split_po_doc(po_number: str, vendor_reference: str = _SPLIT_VENDOR) -> DocumentData:
+    return DocumentData(
+        quantity=Decimal("10"),
+        amount=_SPLIT_PO_AMOUNT,
+        reference=po_number,
+        npwp_vendor=vendor_reference,
+    )
+
+
+@pytest.mark.asyncio
+async def test_detect_split_po_positive(session):
+    """Three sub-threshold POs from the same vendor in 7 days → one SPLIT_PO finding."""
+    svc = _make_service(session)
+    await _seed_po_history(
+        session,
+        po_number="PO-SPLIT-001",
+        amount=_SPLIT_PO_AMOUNT,
+        vendor_reference=_SPLIT_VENDOR,
+        transaction_id="TXN-SPLIT-001",
+    )
+    await _seed_po_history(
+        session,
+        po_number="PO-SPLIT-002",
+        amount=_SPLIT_PO_AMOUNT,
+        vendor_reference=_SPLIT_VENDOR,
+        transaction_id="TXN-SPLIT-002",
+    )
+
+    current_po = _split_po_doc("PO-SPLIT-003")
+    findings = await svc.detect_split_po(current_po, _SPLIT_VENDOR, transaction_id="TXN-SPLIT-003")
+
+    assert len(findings) == 1
+    finding_data = findings[0]["finding_data"]
+    assert finding_data.indication_label == FraudIndication.SPLIT_PO
+    assert finding_data.severity == "HIGH"
+    assert finding_data.evidence_type == "SPLIT_PO"
+    assert finding_data.sop_clause_citation.startswith("SOP-05:")
+    assert findings[0]["evidence_url"] == "po:PO-SPLIT-003"
+    assert "3 PO" in finding_data.description
+    assert _SPLIT_VENDOR in finding_data.description
+
+
+@pytest.mark.asyncio
+async def test_detect_split_po_negative(session):
+    """A single normal PO without peer POs is not a split."""
+    svc = _make_service(session)
+    current_po = _split_po_doc("PO-NORMAL-001")
+
+    findings = await svc.detect_split_po(current_po, _SPLIT_VENDOR)
+
+    assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_detect_split_po_different_vendor(session):
+    """Peer POs from another vendor do not trigger split detection."""
+    svc = _make_service(session)
+    await _seed_po_history(
+        session,
+        po_number="PO-OTHER-001",
+        amount=_SPLIT_PO_AMOUNT,
+        vendor_reference=_SPLIT_OTHER_VENDOR,
+        transaction_id="TXN-OTHER-001",
+    )
+    await _seed_po_history(
+        session,
+        po_number="PO-OTHER-002",
+        amount=_SPLIT_PO_AMOUNT,
+        vendor_reference=_SPLIT_OTHER_VENDOR,
+        transaction_id="TXN-OTHER-002",
+    )
+
+    current_po = _split_po_doc("PO-VENDOR-A-001", vendor_reference=_SPLIT_VENDOR)
+    findings = await svc.detect_split_po(current_po, _SPLIT_VENDOR)
+
+    assert findings == []
+

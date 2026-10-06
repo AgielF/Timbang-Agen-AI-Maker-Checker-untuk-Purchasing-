@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +37,24 @@ class AuditFindingRepository:
         result = await self._session.execute(
             select(AuditFinding).where(AuditFinding.transaction_id == transaction_id)
         )
+        return list(result.scalars().all())
+
+    async def list_recent_by_vendor(
+        self,
+        vendor_reference: str,
+        since: datetime,
+        exclude_po_number: str = "",
+    ) -> list[AuditFinding]:
+        """Return recent findings for a vendor, used as PO history for split detection."""
+        if not vendor_reference:
+            return []
+        query = select(AuditFinding).where(
+            AuditFinding.vendor_reference == vendor_reference,
+            AuditFinding.created_at >= since,
+        )
+        if exclude_po_number:
+            query = query.where(AuditFinding.po_number != exclude_po_number)
+        result = await self._session.execute(query)
         return list(result.scalars().all())
 
 

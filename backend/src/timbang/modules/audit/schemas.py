@@ -34,6 +34,7 @@ class AuditFindingCreate(BaseModel):
     sop_clause_citation: str | None = None
     evidence_type: str = ""
     indication_label: FraudIndication = FraudIndication.UNKNOWN
+    vendor_reference: str = ""
 
 
 class AuditFindingRead(BaseModel):
@@ -51,6 +52,7 @@ class AuditFindingRead(BaseModel):
     sop_clause_citation: str | None = None
     evidence_type: str = ""
     indication_label: FraudIndication = FraudIndication.UNKNOWN
+    vendor_reference: str = ""
     created_at: datetime
 
 

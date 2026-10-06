@@ -31,6 +31,9 @@ class AuditFinding(Base):
     sop_clause_citation: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     evidence_type: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     indication_label: Mapped[str] = mapped_column(String(50), default="UNKNOWN", nullable=False)
+    vendor_reference: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", index=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
