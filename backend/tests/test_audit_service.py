@@ -653,7 +653,7 @@ async def test_generate_risk_report_clean_transaction(session):
         update={"npwp_vendor": "123456789012345"}
     )
     gr = _doc("100", "50000000")
-    inv = _doc("100", "50200000").model_copy(
+    inv = _doc("100", "50200000", ref="INV-2024-002").model_copy(
         update={
             "tax_invoice_ref": "0101234567890123",
             "ppn_amount": Decimal("5500000"),
@@ -674,6 +674,48 @@ async def test_generate_risk_report_clean_transaction(session):
     assert report.overall_status == "PASS"
     assert report.findings == []
     assert "No issues" in report.recommendation
+    # Verify invoice history was recorded with vendor_reference
+    findings = await svc._finding_repo.list_by_transaction("TXN-002")
+    invoice_histories = [f for f in findings if f.evidence_type == "INVOICE_HISTORY"]
+    assert len(invoice_histories) == 1
+    assert invoice_histories[0].vendor_reference == "123456789012345"
+    assert invoice_histories[0].po_number == "INV-2024-002"
+
+
+@pytest.mark.asyncio
+async def test_generate_risk_report_records_invoice_history_with_po_fallback(session):
+    """Invoice history should get vendor_reference from PO when invoice has none."""
+    svc = _make_service(session)
+
+    po = _doc("100", "50000000", ref="PO-FALLBACK-001").model_copy(
+        update={"npwp_vendor": "999888777666555"}
+    )
+    gr = _doc("100", "50000000")
+    # Invoice without npwp_vendor - should fall back to PO
+    inv = _doc("100", "50200000", ref="INV-FALLBACK-001").model_copy(
+        update={
+            "tax_invoice_ref": "0101234567890123",
+            "ppn_amount": Decimal("5500000"),
+            "dpp_amount": Decimal("50000000"),
+        }
+    )
+
+    report = await svc.generate_risk_report(
+        transaction_id="TXN-FALLBACK",
+        po_data=po,
+        gr_data=gr,
+        invoice_data=inv,
+        has_level2_approval=True,
+        has_complete_docs=True,
+    )
+
+    assert report.overall_status == "PASS"
+    # Verify invoice history was recorded with vendor_reference from PO fallback
+    findings = await svc._finding_repo.list_by_transaction("TXN-FALLBACK")
+    invoice_histories = [f for f in findings if f.evidence_type == "INVOICE_HISTORY"]
+    assert len(invoice_histories) == 1
+    assert invoice_histories[0].vendor_reference == "999888777666555"
+    assert invoice_histories[0].po_number == "INV-FALLBACK-001"
 
 
 @pytest.mark.asyncio
@@ -1090,4 +1132,39 @@ async def test_detect_duplicate_invoice_different_amount(session):
     findings = await svc.detect_duplicate_invoice(current_invoice, _DUP_VENDOR)
 
     assert findings == []
+
+
+@pytest.mark.asyncio
+async def test_detect_duplicate_invoice_parses_ref_from_description(session):
+    """Regression: reference should be parsed from description field, not po_number."""
+    svc = _make_service(session)
+    repo = AuditFindingRepository(session)
+
+    # Directly create an INVOICE_HISTORY record with reference in description
+    # (simulating the bug scenario where po_number is empty)
+    await repo.create(
+        AuditFindingCreate(
+            transaction_id="TXN-PARSE-001",
+            po_number="",  # Empty - this was the bug
+            severity="LOW",
+            amount=Decimal("50000000"),
+            description="Invoice history INV-TEST-001",
+            sop_reference="INVOICE_HISTORY",
+            evidence_url="invoice:INV-TEST-001",
+            sop_clause_citation="SOP-06: Setiap invoice harus unik per transaksi — tidak boleh duplikat reference atau nominal",
+            evidence_type="INVOICE_HISTORY",
+            indication_label=FraudIndication.UNKNOWN,
+            vendor_reference=_DUP_VENDOR,
+        )
+    )
+
+    current_invoice = _dup_invoice_doc(invoice_ref="INV-TEST-001")
+    findings = await svc.detect_duplicate_invoice(current_invoice, _DUP_VENDOR)
+
+    assert len(findings) == 1
+    finding_data = findings[0]["finding_data"]
+    assert finding_data.indication_label == FraudIndication.DUPLICATE_INVOICE
+    assert finding_data.severity == "CRITICAL"
+    assert "reference sama persis" in finding_data.description
+    assert "INV-TEST-001" in finding_data.description
 

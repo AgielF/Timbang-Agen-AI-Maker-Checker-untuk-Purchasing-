@@ -779,7 +779,8 @@ class AuditService:
         current_amount = current_invoice.amount
 
         for finding in history:
-            hist_ref = (finding.po_number or "").strip().upper()
+            raw_desc = (finding.description or "").strip()
+            hist_ref = raw_desc.replace("Invoice history ", "").strip().upper()
             hist_amount = Decimal(str(finding.amount))
 
             if current_ref and hist_ref and current_ref == hist_ref:
@@ -1105,10 +1106,13 @@ class AuditService:
             )
 
         if invoice_data is not None:
+            vendor_ref = (invoice_data.npwp_vendor or "").strip()
+            if not vendor_ref and po_data is not None:
+                vendor_ref = (po_data.npwp_vendor or "").strip()
             await self._record_invoice_history(
                 transaction_id=transaction_id,
                 invoice_data=invoice_data,
-                vendor_reference=(invoice_data.npwp_vendor or "").strip(),
+                vendor_reference=vendor_ref,
             )
 
         log.info(
