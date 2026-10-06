@@ -1071,7 +1071,9 @@ class AuditService:
 
         # 5. Duplicate Invoice detection (same vendor, same reference or same amount within 3 days)
         if invoice_data is not None:
-            vendor_reference = (invoice_data.npwp_vendor or "").strip()
+            vendor_reference = (invoice_data.npwp_vendor or "").strip() or (
+                po_data.npwp_vendor or ""
+            ).strip()
             duplicate_findings = await self.detect_duplicate_invoice(
                 invoice_data,
                 vendor_reference,
